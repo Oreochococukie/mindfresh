@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# mindfresh runtime data
+.mindfresh/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# OMX runtime and workflow state; durable planning artifacts are mirrored under docs/
+.omx/
