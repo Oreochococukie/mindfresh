@@ -4,7 +4,7 @@ from pathlib import Path
 from time import sleep
 from typing import Optional
 
-from .config import AppConfig, resolve_watch_targets
+from .config import AppConfig, resolve_effective_adapter_model, resolve_watch_targets
 from .refresh import RefreshResult, refresh_vault
 
 
@@ -16,6 +16,7 @@ def watch_once(
     debounce_ms: int = 500,
     adapter: Optional[str] = None,
     model: Optional[str] = None,
+    model_preset: Optional[str] = None,
     timeout_s: float = 2.0,
 ) -> list[RefreshResult]:
     """Run one bounded debounce cycle for testable/local watch behavior.
@@ -30,15 +31,12 @@ def watch_once(
     results: list[RefreshResult] = []
     for label, path, registered in targets:
         vault = config.vaults.get(label) if registered else None
-        adapter_name = (
-            adapter
-            or (vault.adapter if vault is not None else None)
-            or config.default_adapter
-        )
-        adapter_model = (
-            model
-            or (vault.model if vault is not None else None)
-            or config.default_model
+        adapter_name, adapter_model = resolve_effective_adapter_model(
+            config,
+            vault=vault,
+            adapter_override=adapter,
+            model_override=model,
+            model_preset=model_preset,
         )
         results.extend(
             refresh_vault(

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from mindfresh import adapters, cli, config
@@ -79,6 +80,7 @@ def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None
 
     def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
         captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
         captured["timeout"] = timeout
         captured["payload"] = json.loads(req.data.decode("utf-8"))
         return _FakeHTTPResponse(
@@ -110,10 +112,13 @@ def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None
         previous_summary=None,
     )
 
-    assert str(captured["url"]).startswith(
+    assert captured["url"] == (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-3-flash-preview:generateContent?key="
+        "gemini-3-flash-preview:generateContent"
     )
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["X-goog-api-key"] == "test-key"
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
@@ -121,6 +126,67 @@ def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None
     assert "refreshed_context" in payload["contents"][0]["parts"][0]["text"]
     assert result.model_profile == "google/gemini-3-flash-preview"
     assert result.refreshed_context == "Gemini API 정리본입니다."
+
+
+def test_google_adapter_strips_api_key_env_value(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        captured["headers"] = dict(req.headers)
+        return _FakeHTTPResponse(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": _json_summary()}],
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "  test-key  ")
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+
+    adapter = get_adapter("google")
+    adapter.summarize(
+        topic="policy/policy-platform",
+        sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        previous_summary=None,
+    )
+
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["X-goog-api-key"] == "test-key"
+
+
+def test_google_response_parser_uses_later_candidate_text() -> None:
+    payload = {
+        "candidates": [
+            {"finishReason": "MAX_TOKENS"},
+            {"content": {"parts": [{"text": "first"}, {"text": "second"}]}},
+        ]
+    }
+
+    assert adapters._extract_google_response_text(payload) == "first\nsecond"
+
+
+def test_google_adapter_reports_block_reason(monkeypatch) -> None:
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        return _FakeHTTPResponse({"promptFeedback": {"blockReason": "SAFETY"}})
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+    adapter = get_adapter("google")
+
+    with pytest.raises(adapters.AdapterRuntimeError, match="prompt blocked: SAFETY"):
+        adapter.summarize(
+            topic="policy/policy-platform",
+            sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+            recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+            previous_summary=None,
+        )
 
 
 def test_google_diagnostics_requires_api_key(monkeypatch) -> None:

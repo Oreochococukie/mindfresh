@@ -100,7 +100,6 @@ class FakeSummarizerAdapter:
             freshness_state = "changed"
 
         headlines = [_headline(src.content, fallback=src.relative_path) for src in sources]
-        recent_headlines = [_headline(src.content, fallback=src.relative_path) for src in recent]
         refreshed_context = (
             f"`{topic}` 주제는 요약하지 않고 로컬 원본 노트 {source_count}개의 "
             "핵심 맥락을 최신 기준으로 다시 배열한 정리본입니다.\n\n"
@@ -290,9 +289,12 @@ class GoogleGeminiSummarizerAdapter(LiveLLMSummarizerAdapter):
         }
         body = json.dumps(payload).encode("utf-8")
         req = request.Request(
-            _google_generate_url(self.host, self.model, self.api_key),
+            _google_generate_url(self.host, self.model),
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
             method="POST",
         )
         try:
@@ -312,7 +314,9 @@ class GoogleGeminiSummarizerAdapter(LiveLLMSummarizerAdapter):
 
         generated = _extract_google_response_text(response_payload)
         if not generated.strip():
-            raise AdapterRuntimeError("google response did not include generated text")
+            reason = _google_response_block_reason(response_payload)
+            detail = f": {reason}" if reason else ""
+            raise AdapterRuntimeError(f"google response did not include generated text{detail}")
         return generated
 
 
@@ -428,37 +432,61 @@ def adapter_diagnostics(name: str, *, model: Optional[str] = None) -> tuple[List
 def _google_api_key() -> Optional[str]:
     for env_var in GOOGLE_API_KEY_ENV_VARS:
         value = os.environ.get(env_var)
-        if value:
-            return value
+        if value and value.strip():
+            return value.strip()
     return None
 
 
-def _google_generate_url(host: str, model: str, api_key: str) -> str:
+def _google_generate_url(host: str, model: str) -> str:
     model_id = model.removeprefix("models/")
-    return (
-        f"{host}/models/{quote(model_id, safe='-_.:')}:generateContent"
-        f"?key={quote(api_key, safe='')}"
-    )
+    return f"{host}/models/{quote(model_id, safe='-_.:')}:generateContent"
 
 
 def _extract_google_response_text(payload: Dict[str, Any]) -> str:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         return ""
-    first = candidates[0]
-    if not isinstance(first, dict):
-        return ""
-    content = first.get("content")
-    if not isinstance(content, dict):
-        return ""
-    parts = content.get("parts")
-    if not isinstance(parts, list):
-        return ""
     texts: List[str] = []
-    for part in parts:
-        if isinstance(part, dict) and isinstance(part.get("text"), str):
-            texts.append(part["text"])
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(part["text"])
     return "\n".join(texts)
+
+
+def _google_response_block_reason(payload: Dict[str, Any]) -> Optional[str]:
+    prompt_feedback = payload.get("promptFeedback")
+    if isinstance(prompt_feedback, dict):
+        block_reason = prompt_feedback.get("blockReason")
+        if isinstance(block_reason, str) and block_reason.strip():
+            return f"prompt blocked: {block_reason.strip()}"
+
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return None
+
+    finish_reasons: List[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        finish_reason = candidate.get("finishReason")
+        if not isinstance(finish_reason, str):
+            continue
+        normalized = finish_reason.strip()
+        if normalized and normalized not in {"STOP", "FINISH_REASON_UNSPECIFIED"}:
+            finish_reasons.append(normalized)
+    if finish_reasons:
+        unique = ", ".join(dict.fromkeys(finish_reasons))
+        return f"candidate finish reason(s): {unique}"
+    return None
 
 
 def _headline(content: str, *, fallback: str) -> str:

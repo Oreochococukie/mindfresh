@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # Python < 3.11
 
 import tomli_w
 
-from .model_presets import DEFAULT_GOOGLE_ADAPTER, DEFAULT_GOOGLE_MODEL
+from .model_presets import DEFAULT_GOOGLE_ADAPTER, DEFAULT_GOOGLE_MODEL, get_model_preset
 
 CONFIG_ENV_VAR = "MINDFRESH_CONFIG_PATH"
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "mindfresh"
@@ -72,6 +72,85 @@ def config_path_from_env() -> Optional[Path]:
 
 def default_config_file() -> Path:
     return config_path_from_env() or DEFAULT_CONFIG_FILE
+
+
+def normalize_adapter_name(name: str) -> str:
+    """Normalize adapter aliases that share model defaults."""
+    normalized = name.strip().lower()
+    if normalized == "gemini":
+        return DEFAULT_GOOGLE_ADAPTER
+    return normalized
+
+
+def default_model_for_adapter(adapter: str) -> Optional[str]:
+    """Return a built-in model only for adapters that ship a safe default."""
+    if normalize_adapter_name(adapter) == DEFAULT_GOOGLE_ADAPTER:
+        return DEFAULT_GOOGLE_MODEL
+    return None
+
+
+def resolve_effective_adapter_model(
+    config: AppConfig,
+    *,
+    vault: Optional[VaultConfig] = None,
+    adapter_override: Optional[str] = None,
+    model_override: Optional[str] = None,
+    model_preset: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Resolve adapter/model as a pair without leaking models across adapters.
+
+    Adapter-specific model ids are not interchangeable. If a vault or command
+    switches from the configured default adapter to a different adapter without
+    specifying a model, use that adapter's own built-in default when one exists
+    (currently Google/Gemini) and otherwise leave the model unset so the adapter
+    can either operate model-free (fake) or fail clearly (Ollama/MLX).
+    """
+    base_adapter, base_model = _resolve_base_adapter_model(config, vault)
+
+    if model_preset:
+        preset = get_model_preset(model_preset)
+        selected_adapter = adapter_override or preset.adapter
+        if model_override is not None:
+            selected_model = model_override
+        elif adapter_override and (
+            normalize_adapter_name(adapter_override) != normalize_adapter_name(preset.adapter)
+        ):
+            selected_model = default_model_for_adapter(adapter_override)
+        else:
+            selected_model = preset.model
+        return selected_adapter, selected_model
+
+    if adapter_override:
+        if model_override is not None:
+            return adapter_override, model_override
+        if normalize_adapter_name(adapter_override) == normalize_adapter_name(base_adapter):
+            return adapter_override, base_model
+        return adapter_override, default_model_for_adapter(adapter_override)
+
+    if model_override is not None:
+        return base_adapter, model_override
+
+    return base_adapter, base_model
+
+
+def _resolve_base_adapter_model(
+    config: AppConfig,
+    vault: Optional[VaultConfig],
+) -> Tuple[str, Optional[str]]:
+    if vault is None:
+        return config.default_adapter, config.default_model
+
+    if vault.adapter:
+        if vault.model is not None:
+            return vault.adapter, vault.model
+        if normalize_adapter_name(vault.adapter) == normalize_adapter_name(config.default_adapter):
+            return vault.adapter, config.default_model
+        return vault.adapter, default_model_for_adapter(vault.adapter)
+
+    if vault.model is not None:
+        return config.default_adapter, vault.model
+
+    return config.default_adapter, config.default_model
 
 
 def validate_vault_name(name: str) -> str:
@@ -290,7 +369,12 @@ def describe_vault(name: str, vault: VaultConfig) -> str:
     return f"{name}: {vault.path} ({enabled}, adapter={adapter}, model={model})"
 
 
-def config_diagnostics(config: AppConfig, config_path: Path) -> Tuple[List[str], List[str]]:
+def config_diagnostics(
+    config: AppConfig,
+    config_path: Path,
+    *,
+    include_default_adapter: bool = True,
+) -> Tuple[List[str], List[str]]:
     passes = [f"config path: {config_path}"]
     failures: List[str] = []
     if config_path.exists():
@@ -298,18 +382,20 @@ def config_diagnostics(config: AppConfig, config_path: Path) -> Tuple[List[str],
     else:
         passes.append("config file not created yet")
 
-    if config.default_adapter == "fake":
-        passes.append("fake adapter available")
-    else:
-        passes.append(f"configured default adapter: {config.default_adapter}")
     from .adapters import adapter_diagnostics
 
-    adapter_passes, adapter_failures = adapter_diagnostics(
-        config.default_adapter,
-        model=config.default_model,
-    )
-    passes.extend(f"default adapter: {item}" for item in adapter_passes)
-    failures.extend(f"default adapter: {item}" for item in adapter_failures)
+    if include_default_adapter:
+        if config.default_adapter == "fake":
+            passes.append("fake adapter available")
+        else:
+            passes.append(f"configured default adapter: {config.default_adapter}")
+
+        adapter_passes, adapter_failures = adapter_diagnostics(
+            config.default_adapter,
+            model=config.default_model,
+        )
+        passes.extend(f"default adapter: {item}" for item in adapter_passes)
+        failures.extend(f"default adapter: {item}" for item in adapter_failures)
 
     for name, vault in sorted(config.vaults.items()):
         path = vault.resolved_path
@@ -324,8 +410,7 @@ def config_diagnostics(config: AppConfig, config_path: Path) -> Tuple[List[str],
         passes.append(
             f"vault {name}: generated files ignored: SUMMARY.md, CHANGELOG.md, .mindfresh/**"
         )
-        vault_adapter = vault.adapter or config.default_adapter
-        vault_model = vault.model or config.default_model
+        vault_adapter, vault_model = resolve_effective_adapter_model(config, vault=vault)
         adapter_passes, adapter_failures = adapter_diagnostics(
             vault_adapter,
             model=vault_model,

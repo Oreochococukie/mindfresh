@@ -77,6 +77,80 @@ def test_models_list_and_preset_vault_add(
     assert vault.model == "qwen3:14b"
 
 
+def test_fake_preset_vault_does_not_inherit_default_google_model(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    vault_path = tmp_path / "vault"
+    topic_path = vault_path / "Topic"
+    topic_path.mkdir(parents=True)
+    (topic_path / "note.md").write_text("# Local note\n\nFresh claim.", encoding="utf-8")
+
+    add = runner.invoke(
+        cli_app,
+        ["vault", "add", "ci", str(vault_path), "--model-preset", "fake"],
+    )
+    assert add.exit_code == 0, add.output
+    loaded = config.load_config(isolated_config)
+    assert loaded.default_adapter == "google"
+    assert loaded.default_model == "gemini-3-flash-preview"
+    assert loaded.vaults["ci"].adapter == "fake"
+    assert loaded.vaults["ci"].model is None
+
+    refresh = runner.invoke(cli_app, ["refresh", "ci"])
+
+    assert refresh.exit_code == 0, refresh.output
+    summary = (topic_path / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "모델/런타임 프로필: `fake/deterministic-v1`" in summary
+    assert "fake/gemini-3-flash-preview" not in summary
+
+
+def test_watch_fake_preset_override_clears_registered_vault_model(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    vault_path = tmp_path / "vault"
+    topic_path = vault_path / "Topic"
+    topic_path.mkdir(parents=True)
+    (topic_path / "note.md").write_text("# Local note\n\nFresh claim.", encoding="utf-8")
+
+    add = runner.invoke(
+        cli_app,
+        [
+            "vault",
+            "add",
+            "local",
+            str(vault_path),
+            "--model-preset",
+            "qwen3-14b-ollama",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    watch = runner.invoke(
+        cli_app,
+        ["watch", "--all-enabled", "--once", "--debounce-ms", "0", "--model-preset", "fake"],
+    )
+
+    assert watch.exit_code == 0, watch.output
+    assert "adapter=fake" in watch.output
+    assert "model=[no model]" in watch.output
+    summary = (topic_path / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "모델/런타임 프로필: `fake/deterministic-v1`" in summary
+    assert "fake/qwen3:14b" not in summary
+
+
+def test_refresh_unknown_model_preset_reports_clean_cli_error(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+
+    result = runner.invoke(cli_app, ["refresh", str(vault_path), "--model-preset", "missing"])
+
+    assert result.exit_code == 2
+    assert "unknown model preset: missing" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_cli_vault_lifecycle_without_manual_config_editing(
     runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
 ) -> None:
@@ -140,3 +214,84 @@ def test_watch_all_enabled_rejects_mixed_target_and_registry_mode(
 
     assert result.exit_code != 0
     assert "either a vault/path argument or --all-enabled" in result.output
+
+
+def test_watch_once_reports_adapter_failures_without_traceback(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    topic = tmp_path / "vault" / "research" / "topic-a"
+    topic.mkdir(parents=True)
+    (topic / "source.md").write_text("# Topic A\n\nFresh local claim.\n", encoding="utf-8")
+    vault_path = tmp_path / "vault"
+    assert runner.invoke(cli_app, ["vault", "add", "primary", str(vault_path)]).exit_code == 0
+
+    result = runner.invoke(cli_app, ["watch", "--all-enabled", "--once", "--debounce-ms", "0"])
+
+    assert result.exit_code != 0
+    assert "google adapter requires GOOGLE_API_KEY or GEMINI_API_KEY" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_doctor_registered_vault_uses_vault_model_not_missing_google_default(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    add = runner.invoke(
+        cli_app,
+        ["vault", "add", "docs", str(vault_path), "--model-preset", "fake"],
+    )
+    assert add.exit_code == 0, add.output
+
+    result = runner.invoke(cli_app, ["doctor", "docs"])
+
+    assert result.exit_code == 0, result.output
+    assert "fake adapter available" in result.output
+    assert "google API key missing" not in result.output
+
+
+def test_refresh_adapter_override_does_not_inherit_google_model(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+) -> None:
+    topic = tmp_path / "vault" / "topic"
+    topic.mkdir(parents=True)
+    (topic / "source.md").write_text("# Source\n\nFresh local claim.\n", encoding="utf-8")
+
+    result = runner.invoke(cli_app, ["refresh", str(tmp_path / "vault"), "--adapter", "fake"])
+
+    assert result.exit_code == 0, result.output
+    summary = (topic / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "모델/런타임 프로필: `fake/deterministic-v1`" in summary
+    assert "fake/gemini-3-flash-preview" not in summary
+
+
+def test_refresh_ollama_override_without_model_fails_before_using_google_model(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+) -> None:
+    topic = tmp_path / "vault" / "topic"
+    topic.mkdir(parents=True)
+    (topic / "source.md").write_text("# Source\n\nFresh local claim.\n", encoding="utf-8")
+
+    result = runner.invoke(cli_app, ["refresh", str(tmp_path / "vault"), "--adapter", "ollama"])
+
+    assert result.exit_code != 0
+    assert "ollama adapter requires --model or a vault model" in result.output
+    assert "gemini-3-flash-preview" not in result.output

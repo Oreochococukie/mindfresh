@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import click
 import typer
@@ -15,6 +15,7 @@ from .config import (
     config_diagnostics,
     describe_vault,
     load_config,
+    resolve_effective_adapter_model,
     resolve_watch_targets,
     write_config,
 )
@@ -80,6 +81,8 @@ def init(
         )
     except ValueError as exc:
         _fail(str(exc))
+    if selected_adapter is None:
+        _fail("init requires an adapter or model preset")
     cfg.default_adapter = selected_adapter
     cfg.default_model = selected_model
     cfg.model_profile = model_profile or _profile_label(selected_adapter, selected_model)
@@ -321,7 +324,11 @@ def doctor(
             else:
                 scoped.vaults[label] = VaultConfig(name=label, path=str(path), enabled=True)
         cfg = scoped
-    passes, failures = config_diagnostics(cfg, cfg_path)
+    passes, failures = config_diagnostics(
+        cfg,
+        cfg_path,
+        include_default_adapter=target is None,
+    )
     for item in passes:
         typer.echo(f"PASS {item}")
     for item in failures:
@@ -349,13 +356,16 @@ def refresh(
     cfg = _load_or_exit(_config_path())
     vault = get_vault(cfg, vault_or_path)
     vault_root = Path(vault.path if vault is not None else vault_or_path).expanduser()
-    adapter_name, adapter_model = _resolve_adapter_model(
-        cfg,
-        vault,
-        adapter,
-        model,
-        model_preset,
-    )
+    try:
+        adapter_name, adapter_model = _resolve_adapter_model(
+            cfg,
+            vault,
+            adapter,
+            model,
+            model_preset,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
     try:
         results = refresh_vault(
             vault_root,
@@ -408,20 +418,24 @@ def watch(
     typer.echo(
         f"Watch requested: debounce_ms={debounce_ms}, "
         f"adapter={selected_adapter or '[per-vault/default]'}, "
-        f"model={selected_model or '[per-vault/default]'}"
+        f"model={_format_model_override(selected_model, model_preset=model_preset)}"
     )
     for label, path, registered in targets:
         source = "registered" if registered else "explicit-path"
         typer.echo(f"watch_target\t{label}\t{source}\t{path}")
     if once:
-        results = watch_once(
-            cfg,
-            target=vault_or_path,
-            all_enabled=all_enabled,
-            debounce_ms=debounce_ms,
-            adapter=selected_adapter,
-            model=selected_model,
-        )
+        try:
+            results = watch_once(
+                cfg,
+                target=vault_or_path,
+                all_enabled=all_enabled,
+                debounce_ms=debounce_ms,
+                adapter=selected_adapter,
+                model=selected_model,
+                model_preset=model_preset,
+            )
+        except Exception as exc:  # CLI boundary: show clean error instead of traceback.
+            _fail(str(exc))
         typer.echo(f"Refresh results: {len(results)}")
     else:
         typer.echo("Long-running watch loop is not enabled in this implementation slice; use --once.")
@@ -476,22 +490,13 @@ def _resolve_adapter_model(
     model_override: Optional[str],
     model_preset: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
-    selected_adapter, selected_model = _resolve_preset_adapter_model(
-        preset_name=model_preset,
+    return resolve_effective_adapter_model(
+        cfg,
+        vault=vault,
         adapter_override=adapter_override,
         model_override=model_override,
+        model_preset=model_preset,
     )
-    adapter_name = (
-        selected_adapter
-        or (vault.adapter if vault is not None else None)
-        or cfg.default_adapter
-    )
-    adapter_model = (
-        selected_model
-        or (vault.model if vault is not None else None)
-        or cfg.default_model
-    )
-    return adapter_name, adapter_model
 
 
 def _resolve_preset_adapter_model(
@@ -502,14 +507,24 @@ def _resolve_preset_adapter_model(
 ) -> tuple[Optional[str], Optional[str]]:
     if not preset_name:
         return adapter_override, model_override
-    preset = get_model_preset(preset_name)
-    selected_adapter = adapter_override or preset.adapter
-    selected_model = model_override if model_override is not None else preset.model
-    return selected_adapter, selected_model
+    return resolve_effective_adapter_model(
+        AppConfig(),
+        adapter_override=adapter_override,
+        model_override=model_override,
+        model_preset=preset_name,
+    )
 
 
 def _profile_label(adapter: str, model: Optional[str]) -> str:
     return f"{adapter}/{model or 'default'}"
+
+
+def _format_model_override(model: Optional[str], *, model_preset: Optional[str]) -> str:
+    if model is not None:
+        return model
+    if model_preset:
+        return "[no model]"
+    return "[per-vault/default]"
 
 
 def _print_model_presets() -> None:
@@ -522,7 +537,7 @@ def _print_model_presets() -> None:
         )
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.secho(f"Error: {message}", err=True, fg=typer.colors.RED)
     raise typer.Exit(2)
 

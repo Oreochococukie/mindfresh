@@ -43,11 +43,15 @@ Flow:
 
 ## Quick start
 
-Install from the repo:
+Clone and install from the repo. If the repo is private, make sure this GitHub
+account has access first:
 
 ```bash
+git clone https://github.com/Oreochococukie/mindfresh.git
+cd mindfresh
 python3 -m venv .venv
 source .venv/bin/activate
+python3 -m pip install --upgrade pip
 python3 -m pip install -e .
 ```
 
@@ -83,9 +87,11 @@ Or run with the deterministic local test adapter:
 
 ```bash
 mindfresh refresh research --adapter fake
+mindfresh watch --all-enabled --once --adapter fake
 ```
 
-Run one bounded watch/refresh cycle across enabled vaults:
+Run one bounded live watch/refresh cycle across enabled vaults after your Google
+API key is set:
 
 ```bash
 mindfresh watch --all-enabled --once

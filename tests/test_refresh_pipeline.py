@@ -33,6 +33,7 @@ def test_fake_refresh_writes_required_generated_files_and_preserves_raw(tmp_path
     assert "요약 아님; 최신화와 중복 제거 중심" in summary
     assert "2026-04-24-research.md" in summary
     assert "mindfresh_kind: changelog" in changelog
+    assert "# 최신화·중복제거 변경로그" in changelog
     assert "트리거 파일" in changelog
     assert "정리본 변경점" in changelog
     assert (vault / ".mindfresh" / "manifest.sqlite").exists()

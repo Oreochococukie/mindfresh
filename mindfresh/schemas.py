@@ -6,6 +6,7 @@ from typing import Iterable, Optional, Sequence
 PROMPT_SCHEMA_VERSION = "mindfresh-refresh-dedupe-v3-ko"
 SUMMARY_KIND = "summary"
 CHANGELOG_KIND = "changelog"
+CHANGELOG_TITLE = "# 최신화·중복제거 변경로그"
 
 SUMMARY_SECTIONS = (
     "최신 기준 정리본",
@@ -195,13 +196,13 @@ def render_changelog(*, topic: str, entry: ChangelogEntry, previous: Optional[st
     parts = [
         render_frontmatter(CHANGELOG_KIND, topic),
         "",
-        "# 변경로그",
+        CHANGELOG_TITLE,
         "",
         render_changelog_entry(entry),
     ]
     if previous_body:
         old_without_title = previous_body
-        for title in ("# 변경로그", "# CHANGELOG"):
+        for title in (CHANGELOG_TITLE, "# 변경로그", "# CHANGELOG"):
             if old_without_title.startswith(title):
                 old_without_title = old_without_title[len(title) :].strip()
                 break

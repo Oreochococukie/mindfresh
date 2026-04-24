@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from mindfresh.config import AppConfig, ConfigError, VaultConfig, load_config, write_config
+from mindfresh.config import (
+    AppConfig,
+    ConfigError,
+    VaultConfig,
+    load_config,
+    resolve_effective_adapter_model,
+    write_config,
+)
 
 
 def test_write_and_load_config_atomic(tmp_path: Path):
@@ -26,3 +33,19 @@ def test_validate_missing_vault_fields(tmp_path: Path):
         assert "vault 'foo' requires a path" in str(exc)
     else:
         raise AssertionError("expected ConfigError")
+
+
+def test_effective_model_resolution_does_not_leak_google_model_to_local_adapter() -> None:
+    cfg = AppConfig()
+
+    assert resolve_effective_adapter_model(cfg, adapter_override="fake") == ("fake", None)
+    assert resolve_effective_adapter_model(cfg, adapter_override="ollama") == ("ollama", None)
+    assert resolve_effective_adapter_model(cfg, model_preset="qwen3-14b-ollama") == (
+        "ollama",
+        "qwen3:14b",
+    )
+    assert resolve_effective_adapter_model(
+        cfg,
+        adapter_override="fake",
+        model_preset="gemini-3-flash",
+    ) == ("fake", None)
