@@ -47,6 +47,7 @@ class VaultConfig:
 class AppConfig:
     vaults: Dict[str, VaultConfig] = field(default_factory=dict)
     default_adapter: str = DEFAULT_ADAPTER
+    default_model: Optional[str] = None
     model_profile: str = DEFAULT_MODEL_PROFILE
     schema_version: int = CONFIG_SCHEMA_VERSION
 
@@ -122,10 +123,13 @@ def _coerce_toml(raw: Dict[str, Any]) -> AppConfig:
         )
 
     default_adapter = raw.get("default_adapter", DEFAULT_ADAPTER)
+    default_model = raw.get("default_model")
     model_profile = raw.get("model_profile", DEFAULT_MODEL_PROFILE)
     schema_version = raw.get("schema_version", CONFIG_SCHEMA_VERSION)
     if not isinstance(default_adapter, str):
         raise ConfigError("default_adapter must be a string")
+    if default_model is not None and not isinstance(default_model, str):
+        raise ConfigError("default_model must be a string")
     if not isinstance(model_profile, str):
         raise ConfigError("model_profile must be a string")
     if not isinstance(schema_version, int):
@@ -134,6 +138,7 @@ def _coerce_toml(raw: Dict[str, Any]) -> AppConfig:
     return AppConfig(
         vaults=vaults,
         default_adapter=default_adapter,
+        default_model=default_model,
         model_profile=model_profile,
         schema_version=schema_version,
     )
@@ -162,6 +167,7 @@ def write_config(config: AppConfig, path: Optional[Path] = None) -> Path:
     payload: Dict[str, Any] = {
         "schema_version": config.schema_version,
         "default_adapter": config.default_adapter,
+        **({"default_model": config.default_model} if config.default_model is not None else {}),
         "model_profile": config.model_profile,
         "vaults": {
             name: {
@@ -293,6 +299,14 @@ def config_diagnostics(config: AppConfig, config_path: Path) -> Tuple[List[str],
         passes.append("fake adapter available")
     else:
         passes.append(f"configured default adapter: {config.default_adapter}")
+    from .adapters import adapter_diagnostics
+
+    adapter_passes, adapter_failures = adapter_diagnostics(
+        config.default_adapter,
+        model=config.default_model,
+    )
+    passes.extend(f"default adapter: {item}" for item in adapter_passes)
+    failures.extend(f"default adapter: {item}" for item in adapter_failures)
 
     for name, vault in sorted(config.vaults.items()):
         path = vault.resolved_path
@@ -304,7 +318,17 @@ def config_diagnostics(config: AppConfig, config_path: Path) -> Tuple[List[str],
             passes.append(f"vault {name}: generated paths appear writable")
         elif path.exists():
             failures.append(f"vault {name}: path is not writable {path}")
-        passes.append(f"vault {name}: generated files ignored: SUMMARY.md, CHANGELOG.md, .mindfresh/**")
+        passes.append(
+            f"vault {name}: generated files ignored: SUMMARY.md, CHANGELOG.md, .mindfresh/**"
+        )
+        vault_adapter = vault.adapter or config.default_adapter
+        vault_model = vault.model or config.default_model
+        adapter_passes, adapter_failures = adapter_diagnostics(
+            vault_adapter,
+            model=vault_model,
+        )
+        passes.extend(f"vault {name}: {item}" for item in adapter_passes)
+        failures.extend(f"vault {name}: {item}" for item in adapter_failures)
     return passes, failures
 
 
@@ -313,6 +337,7 @@ def config_json(config: AppConfig) -> str:
         {
             "schema_version": config.schema_version,
             "default_adapter": config.default_adapter,
+            "default_model": config.default_model,
             "model_profile": config.model_profile,
             "vaults": {
                 name: {

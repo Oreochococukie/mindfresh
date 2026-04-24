@@ -18,8 +18,9 @@ The pytest suite is organized around the PRD/test-spec invariants:
 - `tests/test_scanner_boundaries.py` — generated/internal/hidden exclusions, generated-never-reingested behavior, and raw-note immutability for scanning.
 - `tests/test_refresh_integration_contract.py` — fake refresh, manifest, idempotence, single-topic refresh isolation, and crash/retry contracts.
 - `tests/test_watch_contract.py` — enabled-vault allowlist semantics and a bounded watch debounce contract.
+- `tests/test_live_adapters.py` — mocked Ollama HTTP request shape, mocked MLX command invocation, and registered vault model selection.
 
-All Phase 1 local-refresh contracts are expected to pass. If a future phase introduces optional live-model tests, keep those separate from the deterministic fake-adapter suite.
+All deterministic local-refresh contracts are expected to pass. Live-model runtime tests remain manual because they depend on local MLX/Ollama installation and the user's downloaded model.
 
 ## Expected local verification during recovery work
 
@@ -64,11 +65,20 @@ Pass criteria:
 
 ## Optional live-model smoke
 
-Live MLX/Ollama tests are manual/local only and are not required for CI:
+Live MLX/Ollama tests are manual/local only and are not required for CI. Use the model path/id for the locally downloaded Gemma 4 31B model.
 
 ```bash
-python3 -m mindfresh refresh research --adapter mlx --topic research/topic-a
-python3 -m mindfresh refresh research --adapter ollama --topic research/topic-a
+# MLX model path
+python3 -m mindfresh refresh research \
+  --adapter mlx \
+  --model /path/to/your/gemma-4-31b-mlx-model \
+  --topic research/topic-a
+
+# Ollama model id
+python3 -m mindfresh refresh research \
+  --adapter ollama \
+  --model your-gemma-4-31b-model-id \
+  --topic research/topic-a
 ```
 
-Record latency, memory warnings, generated sections, source references, and any missed stale/conflict claims.
+Record latency, memory warnings, generated sections, source references, and any missed stale/conflict claims. Keep these manual results out of CI unless the runtime/model is available in the target environment.

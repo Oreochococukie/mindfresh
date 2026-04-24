@@ -4,10 +4,16 @@ from mindfresh.config import AppConfig, ConfigError, VaultConfig, load_config, w
 
 
 def test_write_and_load_config_atomic(tmp_path: Path):
-    cfg = AppConfig(vaults={"research": VaultConfig(name="research", path=str(tmp_path / "vault"))})
+    cfg = AppConfig(
+        vaults={"research": VaultConfig(name="research", path=str(tmp_path / "vault"))},
+        default_adapter="mlx",
+        default_model="/models/gemma-4-31b",
+    )
     out = write_config(cfg, path=tmp_path / "config.toml")
     loaded = load_config(out)
     assert out.exists()
+    assert loaded.default_adapter == "mlx"
+    assert loaded.default_model == "/models/gemma-4-31b"
     assert loaded.vaults["research"].path == str(tmp_path / "vault")
 
 

@@ -14,7 +14,8 @@ def watch_once(
     target: Optional[str] = None,
     all_enabled: bool = True,
     debounce_ms: int = 500,
-    adapter: str = "fake",
+    adapter: Optional[str] = None,
+    model: Optional[str] = None,
     timeout_s: float = 2.0,
 ) -> list[RefreshResult]:
     """Run one bounded debounce cycle for testable/local watch behavior.
@@ -27,6 +28,23 @@ def watch_once(
         sleep(min(debounce_ms / 1000.0, max(timeout_s, 0.0)))
     targets = resolve_watch_targets(config, target=target, all_enabled=all_enabled)
     results: list[RefreshResult] = []
-    for _label, path, _registered in targets:
-        results.extend(refresh_vault(Path(path), adapter_name=adapter))
+    for label, path, registered in targets:
+        vault = config.vaults.get(label) if registered else None
+        adapter_name = (
+            adapter
+            or (vault.adapter if vault is not None else None)
+            or config.default_adapter
+        )
+        adapter_model = (
+            model
+            or (vault.model if vault is not None else None)
+            or config.default_model
+        )
+        results.extend(
+            refresh_vault(
+                Path(path),
+                adapter_name=adapter_name,
+                adapter_model=adapter_model,
+            )
+        )
     return results

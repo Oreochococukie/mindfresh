@@ -8,7 +8,7 @@ This repo is implemented phase-by-phase. Each phase should end with:
 4. local branch pushed to the private GitHub remote;
 5. `git status --short --branch` showing local and remote are aligned.
 
-Current status: the first runnable implementation batch covers Phases 1–6 with the deterministic `fake` adapter and bounded `watch --once`. Phase 7 live local-model adapters remain intentionally deferred.
+Current status: the implementation covers Phases 1–7 with deterministic fake-adapter tests, optional MLX/Ollama live adapters, and bounded `watch --once`. Phase 8 packaging/distribution polish remains.
 
 ## Phase 0 — Planning baseline
 
@@ -105,6 +105,7 @@ Acceptance:
 - Fake adapter remains default for CI.
 - Live adapters are optional extras.
 - Model/runtime dependencies are isolated behind adapter interfaces.
+- Vault-level `adapter`/`model` settings are honored by `refresh` and `watch --all-enabled`.
 
 ## Phase 8 — Packaging and distribution
 

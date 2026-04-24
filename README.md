@@ -4,7 +4,7 @@ Local-first Markdown freshness watcher for reducing research knowledge freshness
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
 
-> Status: Phase 1 runnable local-refresh slice is implemented. The current build ships the explicit vault registry, deterministic fake adapter, topic scanner, manifest/idempotence tracking, generated summary/changelog writer, and bounded `watch --once` flow.
+> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional MLX/Ollama live adapters, topic scanner, manifest/idempotence tracking, generated summary/changelog writer, and bounded `watch --once` flow.
 
 ## Why this exists
 
@@ -100,17 +100,70 @@ The long-running watcher daemon is intentionally deferred; the current slice exp
 
 The architecture keeps model/runtime behind adapters.
 
-Implemented adapter:
+Implemented adapters:
 
 - `fake`: deterministic no-model adapter for tests and CI.
+- `mlx`: optional Apple Silicon adapter through the `mlx_lm.generate` command.
+- `ollama`: optional local-server adapter through Ollama's `/api/generate` endpoint.
 
-Planned adapters:
+Deferred adapter:
 
-- `mlx`: primary local Apple Silicon adapter.
-- `ollama`: fallback local-server adapter.
 - `llama.cpp`: deferred unless needed.
 
-The preferred quality model remains the user's existing local Gemma 4 31B model when performance is acceptable. The plan keeps model availability capability-detected and adapter-based rather than hardcoded, so Phase 1 works without requiring the local LLM runtime.
+The preferred quality model remains the user's existing local Gemma 4 31B model when performance is acceptable. The fake adapter remains the default so tests and first-run setup do not require a live local LLM.
+
+### Gemma 4 31B via MLX
+
+If your local model is an MLX-compatible model path, register the vault with the model path:
+
+```bash
+mindfresh vault add research ~/Documents/MindfreshDemoVault \
+  --adapter mlx \
+  --model /path/to/your/gemma-4-31b-mlx-model
+
+mindfresh refresh research
+```
+
+`mindfresh` calls `mlx_lm.generate` by default. If your command differs:
+
+```bash
+export MINDFRESH_MLX_COMMAND="python3 -m mlx_lm.generate"
+mindfresh refresh research
+```
+
+### Gemma 4 31B via Ollama
+
+If your model is served by Ollama, use the Ollama model id:
+
+```bash
+mindfresh vault add research ~/Documents/MindfreshDemoVault \
+  --adapter ollama \
+  --model your-gemma-4-31b-model-id
+
+mindfresh refresh research
+```
+
+`mindfresh` uses `http://localhost:11434` by default. Override it when needed:
+
+```bash
+export MINDFRESH_OLLAMA_HOST="http://127.0.0.1:11434"
+mindfresh refresh research
+```
+
+Per-run overrides are also supported:
+
+```bash
+mindfresh refresh research --adapter mlx --model /path/to/model
+mindfresh watch --all-enabled --once --adapter ollama --model your-model-id
+```
+
+Runtime diagnostics are available through `doctor`:
+
+```bash
+mindfresh doctor research
+```
+
+For Ollama, `doctor` checks `/api/tags` to confirm the configured model is installed. For MLX, it checks that the command is resolvable and local-looking model paths exist.
 
 ## Safety guarantees
 
@@ -145,7 +198,7 @@ Deterministic tests are the release gate for the local-first pipeline:
 python3 -m pytest -q
 ```
 
-The suite covers config/vault UX, scanner boundaries, generated-never-reingested behavior, raw-note immutability, manifest/idempotence contracts, watch debounce contracts, and crash/retry expectations. During parallel implementation, tests for not-yet-integrated lanes may report expected xfails; see [Testing and Verification](docs/operations/TESTING.md) for the coverage map and focused commands.
+The suite covers config/vault UX, scanner boundaries, generated-never-reingested behavior, raw-note immutability, manifest/idempotence contracts, watch debounce contracts, crash/retry expectations, and mocked live-adapter request/command boundaries. See [Testing and Verification](docs/operations/TESTING.md) for the coverage map and focused commands.
 
 ## Planning artifacts
 

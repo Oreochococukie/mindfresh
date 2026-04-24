@@ -37,11 +37,12 @@ def refresh_vault(
     *,
     topic: Optional[str] = None,
     adapter_name: str = "fake",
+    adapter_model: Optional[str] = None,
     dry_run: bool = False,
     force: bool = False,
 ) -> list[RefreshResult]:
     root = Path(vault_root).expanduser().resolve()
-    adapter = get_adapter(adapter_name)
+    adapter = get_adapter(adapter_name, model=adapter_model)
     topics = _select_topics(root, topic)
     results: list[RefreshResult] = []
     with connect(root) as conn:
@@ -50,6 +51,7 @@ def refresh_vault(
                 refresh_topic(
                     selected_topic,
                     adapter_name=adapter.name,
+                    adapter_model=adapter_model,
                     model_profile=adapter.model_profile,
                     dry_run=dry_run,
                     force=force,
@@ -63,6 +65,7 @@ def refresh_topic(
     topic: Topic,
     *,
     adapter_name: str = "fake",
+    adapter_model: Optional[str] = None,
     model_profile: str = "fake/deterministic-v1",
     dry_run: bool = False,
     force: bool = False,
@@ -74,6 +77,7 @@ def refresh_topic(
         return _refresh_topic_with_connection(
             topic,
             adapter_name=adapter_name,
+            adapter_model=adapter_model,
             model_profile=model_profile,
             dry_run=dry_run,
             force=force,
@@ -88,12 +92,13 @@ def _refresh_topic_with_connection(
     topic: Topic,
     *,
     adapter_name: str,
+    adapter_model: Optional[str],
     model_profile: str,
     dry_run: bool,
     force: bool,
     conn: object,
 ) -> RefreshResult:
-    adapter = get_adapter(adapter_name)
+    adapter = get_adapter(adapter_name, model=adapter_model)
     topic_rel = topic.relative_path.as_posix()
     topic_dir = topic.vault_root / topic.relative_path
     summary_path = topic_dir / "SUMMARY.md"
@@ -255,6 +260,7 @@ def refresh_with_test_crash(
     *,
     crash_at: Optional[str] = None,
     adapter: str = "fake",
+    model: Optional[str] = None,
 ) -> list[RefreshResult]:
     """Bounded test hook for crash-window retry behavior.
 
@@ -263,7 +269,7 @@ def refresh_with_test_crash(
     second normal call converge through the manifest/idempotence path.
     """
     if crash_at == "after_rename_before_manifest":
-        return refresh_vault(vault_root, adapter_name=adapter, force=True)
+        return refresh_vault(vault_root, adapter_name=adapter, adapter_model=model, force=True)
     if crash_at is None:
-        return refresh_vault(vault_root, adapter_name=adapter)
+        return refresh_vault(vault_root, adapter_name=adapter, adapter_model=model)
     raise ValueError(f"unsupported crash point: {crash_at}")

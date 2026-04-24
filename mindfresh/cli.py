@@ -60,6 +60,7 @@ def init(
     cfg_path = _config_path()
     cfg = _load_or_exit(cfg_path)
     cfg.default_adapter = adapter
+    cfg.default_model = model
     cfg.model_profile = model_profile
 
     if vault_name is not None or vault_path is not None:
@@ -196,6 +197,7 @@ def status() -> None:
     cfg = _load_or_exit(cfg_path)
     typer.echo(f"Config path: {cfg_path}")
     typer.echo(f"Default adapter: {cfg.default_adapter}")
+    typer.echo(f"Default model: {cfg.default_model or 'unset'}")
     typer.echo(f"Model profile: {cfg.model_profile}")
     typer.echo(f"Configured vaults: {len(cfg.vaults)}")
     typer.echo(f"Enabled vaults: {len(enabled_vaults(cfg))}")
@@ -206,7 +208,12 @@ def status() -> None:
 
 
 @app.command()
-def doctor(target: Optional[str] = typer.Argument(None, help="Optional registered vault name or explicit path.")) -> None:
+def doctor(
+    target: Optional[str] = typer.Argument(
+        None,
+        help="Optional registered vault name or explicit path.",
+    ),
+) -> None:
     """Report config/runtime availability and generated-file safety boundaries."""
     cfg_path = _config_path()
     cfg = _load_or_exit(cfg_path)
@@ -215,7 +222,11 @@ def doctor(target: Optional[str] = typer.Argument(None, help="Optional registere
             resolved = resolve_watch_targets(cfg, target=target)
         except ConfigError as exc:
             _fail(str(exc))
-        scoped = AppConfig(default_adapter=cfg.default_adapter, model_profile=cfg.model_profile)
+        scoped = AppConfig(
+            default_adapter=cfg.default_adapter,
+            default_model=cfg.default_model,
+            model_profile=cfg.model_profile,
+        )
         for label, path, registered in resolved:
             if registered:
                 scoped.vaults[label] = cfg.vaults[label]
@@ -236,18 +247,21 @@ def refresh(
     vault_or_path: str,
     topic: Optional[str] = typer.Option(default=None),
     dry_run: bool = typer.Option(False),
-    adapter: str = typer.Option("fake"),
+    adapter: Optional[str] = typer.Option(None, help="Override adapter for this run."),
+    model: Optional[str] = typer.Option(None, help="Override model id/path for this run."),
     force: bool = typer.Option(False),
 ) -> None:
     """Refresh generated SUMMARY.md and CHANGELOG.md files with a local adapter."""
     cfg = _load_or_exit(_config_path())
     vault = get_vault(cfg, vault_or_path)
     vault_root = Path(vault.path if vault is not None else vault_or_path).expanduser()
+    adapter_name, adapter_model = _resolve_adapter_model(cfg, vault, adapter, model)
     try:
         results = refresh_vault(
             vault_root,
             topic=topic,
-            adapter_name=adapter,
+            adapter_name=adapter_name,
+            adapter_model=adapter_model,
             dry_run=dry_run,
             force=force,
         )
@@ -267,7 +281,8 @@ def watch(
     vault_or_path: Optional[str] = typer.Argument(default=None),
     all_enabled: bool = typer.Option(False, "--all-enabled"),
     debounce_ms: int = typer.Option(500),
-    adapter: str = typer.Option("fake"),
+    adapter: Optional[str] = typer.Option(None, help="Override adapter for this watch run."),
+    model: Optional[str] = typer.Option(None, help="Override model id/path for this watch run."),
     once: bool = typer.Option(False, "--once", help="Run one bounded watch cycle then exit."),
 ) -> None:
     """Watch one explicit vault or all enabled registered vaults."""
@@ -276,12 +291,22 @@ def watch(
         targets = resolve_watch_targets(cfg, target=vault_or_path, all_enabled=all_enabled)
     except ConfigError as exc:
         _fail(str(exc))
-    typer.echo(f"Watch requested: debounce_ms={debounce_ms}, adapter={adapter}")
+    typer.echo(
+        f"Watch requested: debounce_ms={debounce_ms}, "
+        f"adapter={adapter or '[per-vault/default]'}, model={model or '[per-vault/default]'}"
+    )
     for label, path, registered in targets:
         source = "registered" if registered else "explicit-path"
         typer.echo(f"watch_target\t{label}\t{source}\t{path}")
     if once:
-        results = watch_once(cfg, target=vault_or_path, all_enabled=all_enabled, debounce_ms=debounce_ms, adapter=adapter)
+        results = watch_once(
+            cfg,
+            target=vault_or_path,
+            all_enabled=all_enabled,
+            debounce_ms=debounce_ms,
+            adapter=adapter,
+            model=model,
+        )
         typer.echo(f"Refresh results: {len(results)}")
     else:
         typer.echo("Long-running watch loop is not enabled in this implementation slice; use --once.")
@@ -327,6 +352,25 @@ def _print_doctor_summary(cfg: AppConfig, path: Path) -> None:
         typer.echo(f"PASS {item}")
     for item in failures:
         typer.echo(f"FAIL {item}")
+
+
+def _resolve_adapter_model(
+    cfg: AppConfig,
+    vault: Optional[VaultConfig],
+    adapter_override: Optional[str],
+    model_override: Optional[str],
+) -> tuple[str, Optional[str]]:
+    adapter_name = (
+        adapter_override
+        or (vault.adapter if vault is not None else None)
+        or cfg.default_adapter
+    )
+    adapter_model = (
+        model_override
+        or (vault.model if vault is not None else None)
+        or cfg.default_model
+    )
+    return adapter_name, adapter_model
 
 
 def _fail(message: str) -> None:
