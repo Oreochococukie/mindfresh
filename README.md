@@ -4,7 +4,7 @@ Local-first Markdown freshness/dedupe watcher for reducing research knowledge fr
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
 
-> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional MLX/Ollama live adapters, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, and bounded `watch --once` flow.
+> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional Google Gemini / MLX / Ollama adapters, model presets, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, and bounded `watch --once` flow.
 
 ## Why this exists
 
@@ -57,15 +57,29 @@ Initialize config without hand-editing TOML:
 mindfresh init
 ```
 
+The default preset is `gemini-3-flash`, which uses the Google Gemini API model
+`gemini-3-flash-preview`. Set one API key environment variable before live use:
+
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+# GEMINI_API_KEY is also accepted.
+```
+
 Register only the vaults you want `mindfresh` to know about:
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault
+mindfresh vault add research ~/Documents/MindfreshDemoVault --model-preset gemini-3-flash
 mindfresh vault list
 mindfresh vault status research
 ```
 
-Refresh a registered vault with the deterministic local test adapter:
+Refresh a registered vault:
+
+```bash
+mindfresh refresh research
+```
+
+Or run with the deterministic local test adapter:
 
 ```bash
 mindfresh refresh research --adapter fake
@@ -74,7 +88,7 @@ mindfresh refresh research --adapter fake
 Run one bounded watch/refresh cycle across enabled vaults:
 
 ```bash
-mindfresh watch --all-enabled --once --adapter fake
+mindfresh watch --all-enabled --once
 ```
 
 ## Vault management UX
@@ -83,10 +97,19 @@ Vault management does not require editing config files:
 
 ```bash
 mindfresh vault add research ~/Documents/MindfreshDemoVault
+mindfresh vault model research gemini-3-flash
 mindfresh vault enable research
 mindfresh vault disable archive
 mindfresh vault list
 mindfresh vault status research
+```
+
+Model preset management:
+
+```bash
+mindfresh models list
+mindfresh models set-default gemini-3-flash
+mindfresh vault model research qwen3-14b-ollama
 ```
 
 Watching:
@@ -104,13 +127,14 @@ mindfresh watch ~/Documents/MindfreshDemoVault --once
 
 The long-running watcher daemon is intentionally deferred; the current slice exposes `--once` so the refresh contract can be tested safely before background scheduling is added.
 
-## Local model direction
+## Model direction
 
 The architecture keeps model/runtime behind adapters.
 
 Implemented adapters:
 
 - `fake`: deterministic no-model adapter for tests and CI.
+- `google` / `gemini`: Google Gemini API adapter. Default model preset is `gemini-3-flash`.
 - `mlx`: optional Apple Silicon adapter through the `mlx_lm.generate` command.
 - `ollama`: optional local-server adapter through Ollama's `/api/generate` endpoint.
 
@@ -118,7 +142,49 @@ Deferred adapter:
 
 - `llama.cpp`: deferred unless needed.
 
-The preferred quality model remains the user's existing local Gemma 4 31B model when performance is acceptable. The fake adapter remains the default so tests and first-run setup do not require a live local LLM.
+The default live preset is `gemini-3-flash` (`google` adapter, `gemini-3-flash-preview` model). This makes another PC usable without a large local LLM. For offline/high-privacy use, pick an Ollama or MLX preset instead.
+
+### Google Gemini API
+
+Set an API key:
+
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+# or:
+export GEMINI_API_KEY="your-google-api-key"
+```
+
+Use the default preset:
+
+```bash
+mindfresh init
+mindfresh vault add docs ~/Documents/vault --model-preset gemini-3-flash
+mindfresh doctor docs
+mindfresh refresh docs
+```
+
+The Google API host defaults to `https://generativelanguage.googleapis.com/v1beta`.
+Override only when testing or proxying:
+
+```bash
+export MINDFRESH_GOOGLE_API_HOST="https://generativelanguage.googleapis.com/v1beta"
+```
+
+### Presets for smaller/local computers
+
+List choices:
+
+```bash
+mindfresh models list
+```
+
+Built-in presets include:
+
+- `gemini-3-flash` — default cloud model, no local VRAM requirement.
+- `qwen3-14b-ollama` — smaller local Ollama preset.
+- `gemma3-12b-ollama` — smaller local Ollama preset.
+- `gemma4-31b-ollama` — larger local Ollama preset.
+- `fake` — deterministic tests/CI.
 
 ### Gemma 4 31B via MLX
 
@@ -161,6 +227,8 @@ mindfresh refresh research
 Per-run overrides are also supported:
 
 ```bash
+mindfresh refresh research --model-preset gemini-3-flash
+mindfresh refresh research --model-preset qwen3-14b-ollama
 mindfresh refresh research --adapter mlx --model /path/to/model
 mindfresh watch --all-enabled --once --adapter ollama --model your-model-id
 ```
@@ -171,7 +239,7 @@ Runtime diagnostics are available through `doctor`:
 mindfresh doctor research
 ```
 
-For Ollama, `doctor` checks `/api/tags` to confirm the configured model is installed. For MLX, it checks that the command is resolvable and local-looking model paths exist.
+For Google, `doctor` checks that `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set. For Ollama, `doctor` checks `/api/tags` to confirm the configured model is installed. For MLX, it checks that the command is resolvable and local-looking model paths exist.
 
 ## Safety guarantees
 
@@ -196,7 +264,7 @@ High-level phases:
 4. Latest-state/changelog schemas and atomic writer.
 5. Refresh pipeline with fake adapter.
 6. Watch mode with debounced per-topic refresh.
-7. MLX/Ollama local model adapters.
+7. Google Gemini / MLX / Ollama model adapters.
 8. Packaging and distribution docs.
 
 ## Testing and verification

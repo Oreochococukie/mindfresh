@@ -15,11 +15,14 @@ except ModuleNotFoundError:  # Python < 3.11
 
 import tomli_w
 
+from .model_presets import DEFAULT_GOOGLE_ADAPTER, DEFAULT_GOOGLE_MODEL
+
 CONFIG_ENV_VAR = "MINDFRESH_CONFIG_PATH"
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "mindfresh"
 DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.toml"
-DEFAULT_ADAPTER = "fake"
-DEFAULT_MODEL_PROFILE = "fake"
+DEFAULT_ADAPTER = DEFAULT_GOOGLE_ADAPTER
+DEFAULT_MODEL = DEFAULT_GOOGLE_MODEL
+DEFAULT_MODEL_PROFILE = f"{DEFAULT_ADAPTER}/{DEFAULT_MODEL}"
 CONFIG_SCHEMA_VERSION = 1
 _VAULT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
@@ -47,7 +50,7 @@ class VaultConfig:
 class AppConfig:
     vaults: Dict[str, VaultConfig] = field(default_factory=dict)
     default_adapter: str = DEFAULT_ADAPTER
-    default_model: Optional[str] = None
+    default_model: Optional[str] = DEFAULT_MODEL
     model_profile: str = DEFAULT_MODEL_PROFILE
     schema_version: int = CONFIG_SCHEMA_VERSION
 

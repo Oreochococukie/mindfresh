@@ -9,10 +9,16 @@ import subprocess
 import importlib.util
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
 from urllib import error, request
+from urllib.parse import quote
+
+from .model_presets import DEFAULT_GOOGLE_MODEL
 
 OLLAMA_HOST_ENV_VAR = "MINDFRESH_OLLAMA_HOST"
 MLX_COMMAND_ENV_VAR = "MINDFRESH_MLX_COMMAND"
+GOOGLE_API_KEY_ENV_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+GOOGLE_API_HOST_ENV_VAR = "MINDFRESH_GOOGLE_API_HOST"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+DEFAULT_GOOGLE_API_HOST = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_TIMEOUT_S = 600.0
@@ -246,6 +252,70 @@ class OllamaSummarizerAdapter(LiveLLMSummarizerAdapter):
         return generated
 
 
+class GoogleGeminiSummarizerAdapter(LiveLLMSummarizerAdapter):
+    """Google Gemini API adapter using the REST generateContent endpoint."""
+
+    name = "google"
+
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_GOOGLE_MODEL,
+        api_key: Optional[str] = None,
+        host: Optional[str] = None,
+    ) -> None:
+        super().__init__(model=model or DEFAULT_GOOGLE_MODEL, runtime_label=self.name)
+        self.api_key = api_key or _google_api_key()
+        self.host = (
+            host or os.environ.get(GOOGLE_API_HOST_ENV_VAR) or DEFAULT_GOOGLE_API_HOST
+        ).rstrip("/")
+
+    def _generate_text(self, prompt: str) -> str:
+        if not self.api_key:
+            joined = " or ".join(GOOGLE_API_KEY_ENV_VARS)
+            raise AdapterRuntimeError(f"google adapter requires {joined}")
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": self.temperature,
+                "maxOutputTokens": self.max_tokens,
+                "responseMimeType": "application/json",
+            },
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            _google_generate_url(self.host, self.model, self.api_key),
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout_s) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            message = f"google generation failed with HTTP {exc.code}"
+            raise AdapterRuntimeError(f"{message}: {detail}" if detail else message) from exc
+        except error.URLError as exc:
+            raise AdapterRuntimeError(
+                f"google runtime unavailable at {self.host}; "
+                f"check network or {GOOGLE_API_HOST_ENV_VAR}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise AdapterRuntimeError("google returned non-JSON response") from exc
+
+        generated = _extract_google_response_text(response_payload)
+        if not generated.strip():
+            raise AdapterRuntimeError("google response did not include generated text")
+        return generated
+
+
 class MlxSummarizerAdapter(LiveLLMSummarizerAdapter):
     """Local MLX-LM adapter using the optional mlx_lm.generate CLI."""
 
@@ -295,6 +365,8 @@ def get_adapter(name: str, *, model: Optional[str] = None) -> SummarizerAdapter:
     normalized = name.strip().lower()
     if normalized == "fake":
         return FakeSummarizerAdapter(model=model)
+    if normalized in {"google", "gemini"}:
+        return GoogleGeminiSummarizerAdapter(model=model or DEFAULT_GOOGLE_MODEL)
     if normalized == "ollama":
         return OllamaSummarizerAdapter(model=model or "")
     if normalized == "mlx":
@@ -309,6 +381,23 @@ def adapter_diagnostics(name: str, *, model: Optional[str] = None) -> tuple[List
     failures: List[str] = []
     if normalized == "fake":
         passes.append("fake adapter available")
+        return passes, failures
+
+    if normalized in {"google", "gemini"}:
+        selected_model = model or DEFAULT_GOOGLE_MODEL
+        host = (os.environ.get(GOOGLE_API_HOST_ENV_VAR) or DEFAULT_GOOGLE_API_HOST).rstrip("/")
+        passes.append(f"google adapter configured for model: {selected_model}")
+        passes.append(f"google host: {host}")
+        if _google_api_key():
+            passes.append(
+                "google API key available via "
+                + " or ".join(GOOGLE_API_KEY_ENV_VARS)
+            )
+        else:
+            failures.append(
+                "google API key missing; set "
+                + " or ".join(GOOGLE_API_KEY_ENV_VARS)
+            )
         return passes, failures
 
     if normalized in {"ollama", "mlx"} and not model:
@@ -334,6 +423,42 @@ def adapter_diagnostics(name: str, *, model: Optional[str] = None) -> tuple[List
 
     failures.append(f"unsupported adapter: {name}")
     return passes, failures
+
+
+def _google_api_key() -> Optional[str]:
+    for env_var in GOOGLE_API_KEY_ENV_VARS:
+        value = os.environ.get(env_var)
+        if value:
+            return value
+    return None
+
+
+def _google_generate_url(host: str, model: str, api_key: str) -> str:
+    model_id = model.removeprefix("models/")
+    return (
+        f"{host}/models/{quote(model_id, safe='-_.:')}:generateContent"
+        f"?key={quote(api_key, safe='')}"
+    )
+
+
+def _extract_google_response_text(payload: Dict[str, Any]) -> str:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+    first = candidates[0]
+    if not isinstance(first, dict):
+        return ""
+    content = first.get("content")
+    if not isinstance(content, dict):
+        return ""
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: List[str] = []
+    for part in parts:
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            texts.append(part["text"])
+    return "\n".join(texts)
 
 
 def _headline(content: str, *, fallback: str) -> str:

@@ -19,6 +19,7 @@ from .config import (
     write_config,
 )
 from .refresh import refresh_vault
+from .model_presets import DEFAULT_MODEL_PRESET, get_model_preset, list_model_presets
 from .vaults import (
     add_vault,
     enabled_vaults,
@@ -32,7 +33,9 @@ from .watch import watch_once
 
 app = typer.Typer(help="mindfresh: local markdown freshness watcher", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage explicit vault registry", no_args_is_help=True)
+models_app = typer.Typer(help="List and select model presets", no_args_is_help=True)
 app.add_typer(vault_app, name="vault")
+app.add_typer(models_app, name="models")
 
 
 @app.callback()
@@ -51,17 +54,35 @@ def callback(
 def init(
     vault_name: Optional[str] = typer.Option(None, "--vault-name", help="Initial vault name."),
     vault_path: Optional[Path] = typer.Option(None, "--vault-path", help="Initial vault directory."),
-    adapter: str = typer.Option("fake", "--adapter", help="Default adapter for generated setup."),
-    model_profile: str = typer.Option("fake", "--model-profile", help="Default model profile label."),
+    model_preset: str = typer.Option(
+        DEFAULT_MODEL_PRESET,
+        "--model-preset",
+        "--preset",
+        help="Model preset to use when --adapter/--model are not supplied.",
+    ),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Default adapter override."),
+    model_profile: Optional[str] = typer.Option(
+        None,
+        "--model-profile",
+        help="Default model profile label.",
+    ),
     model: Optional[str] = typer.Option(None, "--model", help="Optional model identifier/path."),
     enable: bool = typer.Option(True, "--enable/--disable", help="Enable the initial vault."),
 ) -> None:
     """Create initial config without requiring users to edit TOML by hand."""
     cfg_path = _config_path()
     cfg = _load_or_exit(cfg_path)
-    cfg.default_adapter = adapter
-    cfg.default_model = model
-    cfg.model_profile = model_profile
+    try:
+        selected_adapter, selected_model = _resolve_preset_adapter_model(
+            preset_name=model_preset,
+            adapter_override=adapter,
+            model_override=model,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    cfg.default_adapter = selected_adapter
+    cfg.default_model = selected_model
+    cfg.model_profile = model_profile or _profile_label(selected_adapter, selected_model)
 
     if vault_name is not None or vault_path is not None:
         if vault_name is None or vault_path is None:
@@ -71,8 +92,8 @@ def init(
                 cfg,
                 name=vault_name,
                 path=str(vault_path),
-                adapter=adapter,
-                model=model,
+                adapter=selected_adapter,
+                model=selected_model,
                 enabled=enable,
             )
         except ConfigError as exc:
@@ -90,6 +111,12 @@ def vault_add(
     path: str,
     adapter: Optional[str] = typer.Option(default=None),
     model: Optional[str] = typer.Option(default=None),
+    model_preset: Optional[str] = typer.Option(
+        None,
+        "--model-preset",
+        "--preset",
+        help="Use a named model preset instead of typing adapter/model manually.",
+    ),
     enable: bool = typer.Option(True, "--enable/--disable", help="Enable for watch --all-enabled."),
     replace: bool = typer.Option(False, "--replace", help="Replace an existing vault record."),
 ) -> None:
@@ -97,12 +124,20 @@ def vault_add(
     cfg_path = _config_path()
     cfg = _load_or_exit(cfg_path)
     try:
+        selected_adapter, selected_model = _resolve_preset_adapter_model(
+            preset_name=model_preset,
+            adapter_override=adapter,
+            model_override=model,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    try:
         cfg = add_vault(
             cfg,
             name=name,
             path=path,
-            adapter=adapter,
-            model=model,
+            adapter=selected_adapter,
+            model=selected_model,
             enabled=enable,
             replace_existing=replace,
         )
@@ -110,6 +145,32 @@ def vault_add(
         _fail(str(exc))
     _save_or_exit(cfg, cfg_path)
     typer.echo(f"Added vault {name}: {cfg.vaults[name].path} ({'enabled' if enable else 'disabled'})")
+
+
+@vault_app.command("model")
+def vault_model(
+    name: str,
+    model_preset: str = typer.Argument(..., help="Preset from 'mindfresh models list'."),
+) -> None:
+    """Set one vault's adapter/model from a preset."""
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    vault = get_vault(cfg, name)
+    if vault is None:
+        _fail(f"Unknown vault: {name}")
+    try:
+        preset = get_model_preset(model_preset)
+    except ValueError as exc:
+        _fail(str(exc))
+    cfg.vaults[name] = VaultConfig(
+        name=vault.name,
+        path=vault.path,
+        enabled=vault.enabled,
+        adapter=preset.adapter,
+        model=preset.model,
+    )
+    _save_or_exit(cfg, cfg_path)
+    typer.echo(f"Set vault {name} model preset: {preset.name} ({preset.adapter}, {preset.model})")
 
 
 @vault_app.command("list")
@@ -190,6 +251,33 @@ def vault_status(name: Optional[str] = typer.Argument(None)) -> None:
         _print_vault_status(vault_name, cfg.vaults[vault_name])
 
 
+@models_app.command("list")
+def models_list() -> None:
+    """List built-in model presets."""
+    _print_model_presets()
+
+
+@models_app.command("set-default")
+def models_set_default(
+    model_preset: str = typer.Argument(..., help="Preset from 'mindfresh models list'."),
+) -> None:
+    """Set the default adapter/model without hand-editing config TOML."""
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    try:
+        preset = get_model_preset(model_preset)
+    except ValueError as exc:
+        _fail(str(exc))
+    cfg.default_adapter = preset.adapter
+    cfg.default_model = preset.model
+    cfg.model_profile = _profile_label(preset.adapter, preset.model)
+    _save_or_exit(cfg, cfg_path)
+    typer.echo(
+        f"Set default model preset: {preset.name} "
+        f"({preset.adapter}, {preset.model or '[no model]'})"
+    )
+
+
 @app.command()
 def status() -> None:
     """Show configured vaults, enablement, model profile, and watcher state."""
@@ -249,13 +337,25 @@ def refresh(
     dry_run: bool = typer.Option(False),
     adapter: Optional[str] = typer.Option(None, help="Override adapter for this run."),
     model: Optional[str] = typer.Option(None, help="Override model id/path for this run."),
+    model_preset: Optional[str] = typer.Option(
+        None,
+        "--model-preset",
+        "--preset",
+        help="Use a named model preset for this run.",
+    ),
     force: bool = typer.Option(False),
 ) -> None:
     """Refresh generated latest/dedupe artifacts with a local adapter."""
     cfg = _load_or_exit(_config_path())
     vault = get_vault(cfg, vault_or_path)
     vault_root = Path(vault.path if vault is not None else vault_or_path).expanduser()
-    adapter_name, adapter_model = _resolve_adapter_model(cfg, vault, adapter, model)
+    adapter_name, adapter_model = _resolve_adapter_model(
+        cfg,
+        vault,
+        adapter,
+        model,
+        model_preset,
+    )
     try:
         results = refresh_vault(
             vault_root,
@@ -283,6 +383,12 @@ def watch(
     debounce_ms: int = typer.Option(500),
     adapter: Optional[str] = typer.Option(None, help="Override adapter for this watch run."),
     model: Optional[str] = typer.Option(None, help="Override model id/path for this watch run."),
+    model_preset: Optional[str] = typer.Option(
+        None,
+        "--model-preset",
+        "--preset",
+        help="Use a named model preset for this watch run.",
+    ),
     once: bool = typer.Option(False, "--once", help="Run one bounded watch cycle then exit."),
 ) -> None:
     """Watch one explicit vault or all enabled registered vaults."""
@@ -291,9 +397,18 @@ def watch(
         targets = resolve_watch_targets(cfg, target=vault_or_path, all_enabled=all_enabled)
     except ConfigError as exc:
         _fail(str(exc))
+    try:
+        selected_adapter, selected_model = _resolve_preset_adapter_model(
+            preset_name=model_preset,
+            adapter_override=adapter,
+            model_override=model,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
     typer.echo(
         f"Watch requested: debounce_ms={debounce_ms}, "
-        f"adapter={adapter or '[per-vault/default]'}, model={model or '[per-vault/default]'}"
+        f"adapter={selected_adapter or '[per-vault/default]'}, "
+        f"model={selected_model or '[per-vault/default]'}"
     )
     for label, path, registered in targets:
         source = "registered" if registered else "explicit-path"
@@ -304,8 +419,8 @@ def watch(
             target=vault_or_path,
             all_enabled=all_enabled,
             debounce_ms=debounce_ms,
-            adapter=adapter,
-            model=model,
+            adapter=selected_adapter,
+            model=selected_model,
         )
         typer.echo(f"Refresh results: {len(results)}")
     else:
@@ -359,18 +474,52 @@ def _resolve_adapter_model(
     vault: Optional[VaultConfig],
     adapter_override: Optional[str],
     model_override: Optional[str],
+    model_preset: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
+    selected_adapter, selected_model = _resolve_preset_adapter_model(
+        preset_name=model_preset,
+        adapter_override=adapter_override,
+        model_override=model_override,
+    )
     adapter_name = (
-        adapter_override
+        selected_adapter
         or (vault.adapter if vault is not None else None)
         or cfg.default_adapter
     )
     adapter_model = (
-        model_override
+        selected_model
         or (vault.model if vault is not None else None)
         or cfg.default_model
     )
     return adapter_name, adapter_model
+
+
+def _resolve_preset_adapter_model(
+    *,
+    preset_name: Optional[str],
+    adapter_override: Optional[str],
+    model_override: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    if not preset_name:
+        return adapter_override, model_override
+    preset = get_model_preset(preset_name)
+    selected_adapter = adapter_override or preset.adapter
+    selected_model = model_override if model_override is not None else preset.model
+    return selected_adapter, selected_model
+
+
+def _profile_label(adapter: str, model: Optional[str]) -> str:
+    return f"{adapter}/{model or 'default'}"
+
+
+def _print_model_presets() -> None:
+    default_marker = DEFAULT_MODEL_PRESET
+    typer.echo("Preset\tAdapter\tModel\tDescription")
+    for preset in list_model_presets():
+        name = f"{preset.name} (default)" if preset.name == default_marker else preset.name
+        typer.echo(
+            f"{name}\t{preset.adapter}\t{preset.model or '[none]'}\t{preset.description}"
+        )
 
 
 def _fail(message: str) -> None:

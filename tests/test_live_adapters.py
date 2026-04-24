@@ -74,6 +74,65 @@ def test_ollama_adapter_posts_generate_request_with_stream_disabled(
     assert result.refreshed_context == "Gemma 라이브 어댑터 최신화·중복제거 정리본입니다."
 
 
+def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return _FakeHTTPResponse(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": _json_summary(
+                                        refreshed_context="Gemini API 정리본입니다."
+                                    )
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+    adapter = get_adapter("google")
+
+    result = adapter.summarize(
+        topic="policy/policy-platform",
+        sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        previous_summary=None,
+    )
+
+    assert str(captured["url"]).startswith(
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-3-flash-preview:generateContent?key="
+    )
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["generationConfig"]["responseMimeType"] == "application/json"
+    assert payload["generationConfig"]["maxOutputTokens"] == adapters.DEFAULT_MAX_TOKENS
+    assert "refreshed_context" in payload["contents"][0]["parts"][0]["text"]
+    assert result.model_profile == "google/gemini-3-flash-preview"
+    assert result.refreshed_context == "Gemini API 정리본입니다."
+
+
+def test_google_diagnostics_requires_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    passes, failures = adapters.adapter_diagnostics("google", model="gemini-3-flash-preview")
+
+    assert any("google adapter configured" in item for item in passes)
+    assert any("API key missing" in item for item in failures)
+
+
 def test_ollama_diagnostics_checks_installed_model(monkeypatch) -> None:
     def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
         assert req.full_url == "http://localhost:11434/api/tags"

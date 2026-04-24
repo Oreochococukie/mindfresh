@@ -45,6 +45,36 @@ def test_init_creates_readable_config(runner: CliRunner, isolated_config: Path, 
     assert isolated_config.exists()
     loaded = config.load_config(isolated_config)
     assert loaded.vaults == {}
+    assert loaded.default_adapter == "google"
+    assert loaded.default_model == "gemini-3-flash-preview"
+
+
+def test_models_list_and_preset_vault_add(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+
+    listing = runner.invoke(cli_app, ["models", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert "gemini-3-flash (default)" in listing.output
+    assert "qwen3-14b-ollama" in listing.output
+
+    add = runner.invoke(
+        cli_app,
+        [
+            "vault",
+            "add",
+            "small",
+            str(vault_path),
+            "--model-preset",
+            "qwen3-14b-ollama",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    vault = config.load_config(isolated_config).vaults["small"]
+    assert vault.adapter == "ollama"
+    assert vault.model == "qwen3:14b"
 
 
 def test_cli_vault_lifecycle_without_manual_config_editing(
