@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mindfresh"
+version = "0.1.0"
+description = "Local-first Markdown freshness watcher for generated topic summaries."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "mindfresh contributors"}]
+license = {text = "Private"}
+dependencies = [
+  "typer>=0.12",
+  "click>=8",
+  "tomli-w>=1.0",
+  "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+mindfresh = "mindfresh.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mindfresh*"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+
+[tool.ruff]
+line-length = 100

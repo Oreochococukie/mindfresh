@@ -10,7 +10,7 @@
 
 ```bash
 git status --short --branch
-python -m pytest          # once tests exist
+python3 -m pytest -q
 git add <phase files>
 git commit -m "<Lore commit message>"
 git push origin main

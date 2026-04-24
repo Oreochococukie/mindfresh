@@ -8,6 +8,8 @@ This repo is implemented phase-by-phase. Each phase should end with:
 4. local branch pushed to the private GitHub remote;
 5. `git status --short --branch` showing local and remote are aligned.
 
+Current status: the first runnable implementation batch covers Phases 1–6 with the deterministic `fake` adapter and bounded `watch --once`. Phase 7 live local-model adapters remain intentionally deferred.
+
 ## Phase 0 — Planning baseline
 
 - Commit planning artifacts, README, and phase policy.

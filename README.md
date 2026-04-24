@@ -4,7 +4,7 @@ Local-first Markdown freshness watcher for reducing research knowledge freshness
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
 
-> Status: planning complete. Implementation will proceed phase-by-phase with local and remote Git commits kept in sync.
+> Status: Phase 1 runnable local-refresh slice is implemented. The current build ships the explicit vault registry, deterministic fake adapter, topic scanner, manifest/idempotence tracking, generated summary/changelog writer, and bounded `watch --once` flow.
 
 ## Why this exists
 
@@ -33,15 +33,45 @@ Flow:
 5. Generated files are excluded from source ingestion to avoid self-summarizing loops.
 6. Raw notes remain byte-for-byte unchanged.
 
-## Planned user experience
+## Quick start
 
-First-run wizard:
+Install from the repo:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e .
+```
+
+Initialize config without hand-editing TOML:
 
 ```bash
 mindfresh init
 ```
 
-Vault management without editing config:
+Register only the vaults you want `mindfresh` to know about:
+
+```bash
+mindfresh vault add research ~/Documents/MindfreshDemoVault
+mindfresh vault list
+mindfresh vault status research
+```
+
+Refresh a registered vault with the deterministic local test adapter:
+
+```bash
+mindfresh refresh research --adapter fake
+```
+
+Run one bounded watch/refresh cycle across enabled vaults:
+
+```bash
+mindfresh watch --all-enabled --once --adapter fake
+```
+
+## Vault management UX
+
+Vault management does not require editing config files:
 
 ```bash
 mindfresh vault add research ~/Documents/MindfreshDemoVault
@@ -54,28 +84,33 @@ mindfresh vault status research
 Watching:
 
 ```bash
-mindfresh watch research
-mindfresh watch --all-enabled
+mindfresh watch research --once
+mindfresh watch --all-enabled --once
 ```
 
 One-off explicit path watch is allowed but does not auto-register the path:
 
 ```bash
-mindfresh watch ~/Documents/MindfreshDemoVault
+mindfresh watch ~/Documents/MindfreshDemoVault --once
 ```
+
+The long-running watcher daemon is intentionally deferred; the current slice exposes `--once` so the refresh contract can be tested safely before background scheduling is added.
 
 ## Local model direction
 
 The architecture keeps model/runtime behind adapters.
 
-Planned adapters:
+Implemented adapter:
 
 - `fake`: deterministic no-model adapter for tests and CI.
+
+Planned adapters:
+
 - `mlx`: primary local Apple Silicon adapter.
 - `ollama`: fallback local-server adapter.
 - `llama.cpp`: deferred unless needed.
 
-The current preferred quality model is the user's existing local Gemma 4 31B model when performance is acceptable. The plan still keeps model availability capability-detected and adapter-based rather than hardcoded.
+The preferred quality model remains the user's existing local Gemma 4 31B model when performance is acceptable. The plan keeps model availability capability-detected and adapter-based rather than hardcoded, so Phase 1 works without requiring the local LLM runtime.
 
 ## Safety guarantees
 
@@ -101,6 +136,16 @@ High-level phases:
 6. Watch mode with debounced per-topic refresh.
 7. MLX/Ollama local model adapters.
 8. Packaging and distribution docs.
+
+## Testing and verification
+
+Deterministic tests are the release gate for the local-first pipeline:
+
+```bash
+python3 -m pytest -q
+```
+
+The suite covers config/vault UX, scanner boundaries, generated-never-reingested behavior, raw-note immutability, manifest/idempotence contracts, watch debounce contracts, and crash/retry expectations. During parallel implementation, tests for not-yet-integrated lanes may report expected xfails; see [Testing and Verification](docs/operations/TESTING.md) for the coverage map and focused commands.
 
 ## Planning artifacts
 
