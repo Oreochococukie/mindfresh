@@ -59,7 +59,7 @@ class AdapterRuntimeError(RuntimeError):
 
 
 class FakeSummarizerAdapter:
-    """Deterministic no-model adapter for tests, CI, and local dry runs."""
+    """Deterministic Korean no-model adapter for tests, CI, and local dry runs."""
 
     name = "fake"
 
@@ -95,43 +95,40 @@ class FakeSummarizerAdapter:
         headlines = [_headline(src.content, fallback=src.relative_path) for src in sources]
         recent_headlines = [_headline(src.content, fallback=src.relative_path) for src in recent]
         current = (
-            f"Topic `{topic}` reflects {source_count} local source note(s). "
-            f"Latest deterministic signal: {', '.join(recent_headlines[:3])}."
+            f"`{topic}` 주제는 로컬 원본 노트 {source_count}개를 반영합니다. "
+            f"최근 결정적 신호는 {', '.join(recent_headlines[:3])}입니다."
         )
 
         changed = [
             (
-                f"`{src.relative_path}` introduced or changed local evidence: "
+                f"`{src.relative_path}` 파일이 추가 또는 변경한 로컬 근거: "
                 f"{_headline(src.content, fallback=src.relative_path)}"
             )
             for src in recent
         ]
-        stable = [f"Retained local source signal: {headline}" for headline in headlines[:5]]
+        stable = [f"유지되는 로컬 원본 신호: {headline}" for headline in headlines[:5]]
 
         stale_conflicts: list[str] = []
         if freshness_state == "conflicts":
             stale_conflicts.append(
-                "Recent local notes contain conflict/contradiction markers that require review."
+                "최근 로컬 노트에 검토가 필요한 충돌/모순 표시가 포함되어 있습니다."
             )
         elif freshness_state == "stale-risk":
             stale_conflicts.append(
-                "Recent local notes mark an unresolved stale-risk or outdated claim."
+                "최근 로컬 노트에 해결되지 않은 낡음 위험 또는 오래된 주장이 표시되어 있습니다."
             )
 
         if freshness_state in {"conflicts", "stale-risk"}:
             questions = [
-                "Review the cited local source notes and decide which claim supersedes "
-                "the older summary."
+                "인용된 로컬 원본 노트를 확인하고 어떤 주장이 이전 요약을 대체하는지 결정하세요."
             ]
         else:
             questions = [
-                "No conflict marker was detected; continue adding dated research "
-                "notes as evidence changes."
+                "충돌 표시는 감지되지 않았습니다. 근거가 바뀔 때 날짜가 있는 연구 노트를 계속 추가하세요."
             ]
 
         delta = (
-            f"Processed {recent_count} recent source note(s) out of "
-            f"{source_count} total source note(s)."
+            f"전체 원본 노트 {source_count}개 중 최근 원본 노트 {recent_count}개를 처리했습니다."
         )
         updated_claims = [
             f"{topic}: {_headline(src.content, fallback=src.relative_path)}"
@@ -425,32 +422,34 @@ def _build_live_prompt(
     previous = (previous_summary or "").strip()
     if len(previous) > MAX_SOURCE_CHARS:
         previous = previous[:MAX_SOURCE_CHARS] + "\n...[truncated]"
-    return f"""You are mindfresh, a local-first Markdown research freshness engine.
+    return f"""당신은 로컬 우선 Markdown 연구 신선도 엔진 mindfresh입니다.
 
-Task: update a topic-level summary from only the local source notes provided below.
+작업: 아래에 제공된 로컬 원본 노트만 사용해서 주제 단위 요약을 갱신하세요.
 
-Rules:
-- Do not invent facts that are not supported by the source notes.
-- Keep stale/conflicting claims explicit.
-- Prefer freshness: recent changed notes should drive the delta.
-- Return only one valid JSON object. Do not wrap it in Markdown.
+규칙:
+- 원본 노트가 뒷받침하지 않는 사실을 만들지 마세요.
+- 낡았거나 충돌하는 주장을 명시적으로 표시하세요.
+- 신선도를 우선하세요. 최근 변경 노트가 변경점을 주도해야 합니다.
+- 사람에게 보이는 모든 값은 반드시 한국어로 작성하세요.
+- 영어 섹션명이나 영어 문장으로 답하지 마세요.
+- 유효한 JSON 객체 하나만 반환하세요. Markdown 코드블록으로 감싸지 마세요.
 
-Required JSON keys:
+필수 JSON key:
 - freshness_state: one of "fresh", "changed", "stale-risk", "conflicts"
-- current_conclusion: string
-- changed_recently: array of strings
-- stable_facts: array of strings
-- stale_or_conflicting_claims: array of strings
-- open_questions: array of strings
-- summary_delta: string
-- updated_claims: array of strings
+- current_conclusion: 한국어 문자열
+- changed_recently: 한국어 문자열 배열
+- stable_facts: 한국어 문자열 배열
+- stale_or_conflicting_claims: 한국어 문자열 배열
+- open_questions: 한국어 문자열 배열
+- summary_delta: 한국어 문자열
+- updated_claims: 한국어 문자열 배열
 
-Topic: {topic}
+주제: {topic}
 
-Previous generated summary:
-{previous or "(none)"}
+이전 생성 요약:
+{previous or "(없음)"}
 
-Local source notes:
+로컬 원본 노트:
 {source_blocks}
 """
 
@@ -476,7 +475,7 @@ def _parse_summary_result(raw: str, *, model_profile: str) -> SummaryResult:
         freshness_state=freshness,
         current_conclusion=_coerce_text(
             data.get("current_conclusion"),
-            "No conclusion returned.",
+            "모델이 결론을 반환하지 않았습니다.",
         ),
         changed_recently=_coerce_text_list(data.get("changed_recently")),
         stable_facts=_coerce_text_list(data.get("stable_facts")),
@@ -484,7 +483,7 @@ def _parse_summary_result(raw: str, *, model_profile: str) -> SummaryResult:
         open_questions=_coerce_text_list(data.get("open_questions")),
         summary_delta=_coerce_text(
             data.get("summary_delta"),
-            "Live model returned a summary update.",
+            "라이브 모델이 요약 갱신을 반환했습니다.",
         ),
         updated_claims=_coerce_text_list(data.get("updated_claims")),
         model_profile=model_profile,
@@ -511,19 +510,19 @@ def _extract_json_object(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def _fallback_live_summary(raw: str, *, model_profile: str) -> SummaryResult:
-    cleaned = raw.strip() or "The live model returned an empty response."
+    cleaned = raw.strip() or "라이브 모델이 빈 응답을 반환했습니다."
     return SummaryResult(
         freshness_state="changed",
         current_conclusion=cleaned[:2000],
         changed_recently=[
-            "Live model response could not be parsed as JSON; stored raw conclusion."
+            "라이브 모델 응답을 JSON으로 파싱하지 못해 원문 결론을 저장했습니다."
         ],
         stable_facts=[],
         stale_or_conflicting_claims=[],
         open_questions=[
-            "Re-run with a stricter prompt or inspect the cited source notes manually."
+            "더 엄격한 프롬프트로 다시 실행하거나 인용된 원본 노트를 직접 확인하세요."
         ],
-        summary_delta="Live model response was captured through the fallback parser.",
+        summary_delta="라이브 모델 응답이 fallback 파서를 통해 기록되었습니다.",
         updated_claims=[],
         model_profile=model_profile,
     )

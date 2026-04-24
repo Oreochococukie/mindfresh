@@ -28,13 +28,13 @@ class _FakeHTTPResponse:
 def _json_summary(**overrides: object) -> str:
     payload: dict[str, object] = {
         "freshness_state": "changed",
-        "current_conclusion": "Gemma live adapter summary.",
-        "changed_recently": ["New source note was incorporated."],
-        "stable_facts": ["Raw source notes remain the evidence boundary."],
+        "current_conclusion": "Gemma 라이브 어댑터 요약입니다.",
+        "changed_recently": ["새 원본 노트가 반영되었습니다."],
+        "stable_facts": ["원본 노트가 근거 경계로 유지됩니다."],
         "stale_or_conflicting_claims": [],
-        "open_questions": ["Check the next model release note manually."],
-        "summary_delta": "One new note changed the topic summary.",
-        "updated_claims": ["Updated local claim."],
+        "open_questions": ["다음 모델 릴리스 노트를 수동으로 확인하세요."],
+        "summary_delta": "새 노트 하나가 주제 요약을 변경했습니다.",
+        "updated_claims": ["업데이트된 로컬 주장입니다."],
     }
     payload.update(overrides)
     return json.dumps(payload)
@@ -68,7 +68,7 @@ def test_ollama_adapter_posts_generate_request_with_stream_disabled(
     assert payload["stream"] is False
     assert payload["format"] == "json"
     assert result.model_profile == "ollama/gemma4:31b"
-    assert result.current_conclusion == "Gemma live adapter summary."
+    assert result.current_conclusion == "Gemma 라이브 어댑터 요약입니다."
 
 
 def test_ollama_diagnostics_checks_installed_model(monkeypatch) -> None:
@@ -110,7 +110,7 @@ def test_mlx_adapter_invokes_generate_command(monkeypatch) -> None:
     assert "--max-tokens" in cmd
     assert "--temp" in cmd
     assert result.model_profile == "mlx//models/gemma-4-31b"
-    assert result.updated_claims == ["Updated local claim."]
+    assert result.updated_claims == ["업데이트된 로컬 주장입니다."]
 
 
 def test_registered_vault_model_is_used_when_refresh_has_no_override(
@@ -146,4 +146,4 @@ def test_registered_vault_model_is_used_when_refresh_has_no_override(
     assert refresh.exit_code == 0, refresh.output
 
     summary = (topic / "SUMMARY.md").read_text(encoding="utf-8")
-    assert "Model/runtime profile: `fake/gemma4-31b-local`" in summary
+    assert "모델/런타임 프로필: `fake/gemma4-31b-local`" in summary

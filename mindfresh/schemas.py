@@ -3,18 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
-PROMPT_SCHEMA_VERSION = "mindfresh-summary-changelog-v1"
+PROMPT_SCHEMA_VERSION = "mindfresh-summary-changelog-v2-ko"
 SUMMARY_KIND = "summary"
 CHANGELOG_KIND = "changelog"
 
 SUMMARY_SECTIONS = (
-    "Current conclusion",
-    "What changed recently",
-    "Stable facts retained",
-    "Stale or conflicting claims",
-    "Open questions / next checks",
-    "Sources considered",
-    "Last refreshed metadata",
+    "현재 결론",
+    "최근 변경 사항",
+    "유지되는 안정적 사실",
+    "낡았거나 충돌하는 주장",
+    "열린 질문 / 다음 확인",
+    "검토한 출처",
+    "마지막 갱신 메타데이터",
 )
 
 
@@ -51,6 +51,7 @@ def render_frontmatter(kind: str, topic: str, run_id: Optional[str] = None) -> s
         "mindfresh_generated: true",
         f"mindfresh_kind: {kind}",
         f"mindfresh_topic: {topic}",
+        f"mindfresh_prompt_schema_version: {PROMPT_SCHEMA_VERSION}",
     ]
     if run_id is not None:
         lines.append(f"mindfresh_run_id: {run_id}")
@@ -67,8 +68,18 @@ def _bullet(items: Iterable[str], empty: str) -> str:
 
 def _source_bullets(sources: Sequence[SourceRef]) -> str:
     if not sources:
-        return "- No source files were considered."
+        return "- 검토한 원본 파일이 없습니다."
     return "\n".join(f"- `{src.path}` — `{src.hash_prefix}`" for src in sources)
+
+
+def _freshness_label(value: str) -> str:
+    labels = {
+        "fresh": "최신",
+        "changed": "변경됨",
+        "stale-risk": "낡음 위험",
+        "conflicts": "충돌 있음",
+    }
+    return labels.get(value, value)
 
 
 def render_summary(
@@ -88,44 +99,44 @@ def render_summary(
     body = [
         render_frontmatter(SUMMARY_KIND, topic, run_id),
         "",
-        "# SUMMARY",
+        "# 요약",
         "",
-        "## Current conclusion",
+        "## 현재 결론",
         str(getattr(result, "current_conclusion")),
         "",
-        "## What changed recently",
+        "## 최근 변경 사항",
         _bullet(
             getattr(result, "changed_recently"),
-            "No material local source changes were detected for this run.",
+            "이번 실행에서 중요한 로컬 원본 변경은 감지되지 않았습니다.",
         ),
         "",
-        "## Stable facts retained",
+        "## 유지되는 안정적 사실",
         _bullet(
             getattr(result, "stable_facts"),
-            "No previous stable facts were available to retain.",
+            "유지할 이전 안정적 사실이 아직 없습니다.",
         ),
         "",
-        "## Stale or conflicting claims",
+        "## 낡았거나 충돌하는 주장",
         _bullet(
             getattr(result, "stale_or_conflicting_claims"),
-            "No stale or conflicting local claims were detected.",
+            "낡았거나 충돌하는 로컬 주장은 감지되지 않았습니다.",
         ),
         "",
-        "## Open questions / next checks",
+        "## 열린 질문 / 다음 확인",
         _bullet(
             getattr(result, "open_questions"),
-            "No follow-up checks were generated from local inputs.",
+            "로컬 입력에서 추가 확인 항목이 생성되지 않았습니다.",
         ),
         "",
-        "## Sources considered",
+        "## 검토한 출처",
         _source_bullets(source_refs),
         "",
-        "## Last refreshed metadata",
-        f"- Run ID: `{run_id}`",
-        f"- Refreshed at: `{timestamp}`",
-        f"- Freshness state: `{getattr(result, 'freshness_state')}`",
-        f"- Model/runtime profile: `{getattr(result, 'model_profile')}`",
-        f"- Prompt schema version: `{PROMPT_SCHEMA_VERSION}`",
+        "## 마지막 갱신 메타데이터",
+        f"- 실행 ID: `{run_id}`",
+        f"- 갱신 시각: `{timestamp}`",
+        f"- 신선도 상태: `{_freshness_label(getattr(result, 'freshness_state'))}`",
+        f"- 모델/런타임 프로필: `{getattr(result, 'model_profile')}`",
+        f"- 프롬프트 스키마 버전: `{PROMPT_SCHEMA_VERSION}`",
         "",
     ]
     return "\n".join(body)
@@ -136,20 +147,20 @@ def render_changelog_entry(entry: ChangelogEntry) -> str:
         [
             f"## {entry.timestamp} — run `{entry.run_id}`",
             "",
-            f"- Freshness state: `{entry.freshness_state}`",
-            f"- Model/runtime profile: `{entry.model_profile}`",
-            "- Trigger file(s):",
-            _bullet(entry.trigger_files, "No changed source files were identified."),
-            "- Summary delta:",
+            f"- 신선도 상태: `{_freshness_label(entry.freshness_state)}`",
+            f"- 모델/런타임 프로필: `{entry.model_profile}`",
+            "- 트리거 파일:",
+            _bullet(entry.trigger_files, "변경된 원본 파일이 확인되지 않았습니다."),
+            "- 요약 변경점:",
             f"  - {entry.summary_delta}",
-            "- Updated claims:",
-            _bullet(entry.updated_claims, "No updated claims were produced."),
-            "- Stale/conflicting claims:",
+            "- 업데이트된 주장:",
+            _bullet(entry.updated_claims, "업데이트된 주장이 생성되지 않았습니다."),
+            "- 낡았거나 충돌하는 주장:",
             _bullet(
                 entry.stale_or_conflicting_claims,
-                "No stale or conflicting claims were produced.",
+                "낡았거나 충돌하는 주장이 생성되지 않았습니다.",
             ),
-            "- Source references:",
+            "- 출처 참조:",
             _source_bullets(entry.source_refs),
         ]
     )
@@ -167,18 +178,25 @@ def strip_generated_frontmatter(markdown: str) -> str:
 def render_changelog(*, topic: str, entry: ChangelogEntry, previous: Optional[str] = None) -> str:
     """Render CHANGELOG.md, prepending newest run entries."""
 
-    previous_body = strip_generated_frontmatter(previous or "")
+    previous_text = previous or ""
+    previous_body = (
+        strip_generated_frontmatter(previous_text)
+        if f"mindfresh_prompt_schema_version: {PROMPT_SCHEMA_VERSION}" in previous_text
+        else ""
+    )
     parts = [
         render_frontmatter(CHANGELOG_KIND, topic),
         "",
-        "# CHANGELOG",
+        "# 변경로그",
         "",
         render_changelog_entry(entry),
     ]
     if previous_body:
         old_without_title = previous_body
-        if old_without_title.startswith("# CHANGELOG"):
-            old_without_title = old_without_title[len("# CHANGELOG") :].strip()
+        for title in ("# 변경로그", "# CHANGELOG"):
+            if old_without_title.startswith(title):
+                old_without_title = old_without_title[len(title) :].strip()
+                break
         if old_without_title:
             parts.extend(["", old_without_title])
     parts.append("")

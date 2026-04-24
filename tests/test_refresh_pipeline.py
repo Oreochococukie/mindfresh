@@ -26,11 +26,11 @@ def test_fake_refresh_writes_required_generated_files_and_preserves_raw(tmp_path
     changelog = (topic / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "mindfresh_generated: true" in summary
     assert "mindfresh_kind: summary" in summary
-    assert "## Current conclusion" in summary
-    assert "## Sources considered" in summary
+    assert "## 현재 결론" in summary
+    assert "## 검토한 출처" in summary
     assert "2026-04-24-research.md" in summary
     assert "mindfresh_kind: changelog" in changelog
-    assert "Trigger file(s)" in changelog
+    assert "트리거 파일" in changelog
     assert (vault / ".mindfresh" / "manifest.sqlite").exists()
 
 
