@@ -1,14 +1,22 @@
 # mindfresh
 
-Local-first Markdown freshness watcher for reducing research knowledge freshness bottlenecks.
+Local-first Markdown freshness/dedupe watcher for reducing research knowledge freshness bottlenecks.
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
 
-> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional MLX/Ollama live adapters, topic scanner, manifest/idempotence tracking, generated summary/changelog writer, and bounded `watch --once` flow.
+> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional MLX/Ollama live adapters, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, and bounded `watch --once` flow.
 
 ## Why this exists
 
-Fast-moving topics like Research models, research workflows, policy policies, and AI tooling change every day. A week-old note can already be stale. `mindfresh` is designed to keep topic-level summaries fresh without forcing you to reread every raw note.
+Fast-moving topics like Research models, research workflows, policy policies, and AI tooling change every day. A week-old note can already be stale. `mindfresh` is designed to keep topic-level knowledge current without forcing you to reread every raw note.
+
+The generated `SUMMARY.md` is intentionally not a short abstract. It is a Korean latest-state document that:
+
+- preserves important source context, dates, numbers, caveats, and comparisons;
+- merges semantically duplicated claims into one canonical latest claim;
+- records which duplicate claims were collapsed;
+- marks stale or conflicting claims instead of silently deleting them;
+- keeps the raw Markdown notes untouched.
 
 ## Core behavior
 
@@ -18,7 +26,7 @@ vault/
     topic-a/
       2026-04-24-source-a.md    # raw note, never edited
       2026-04-25-source-b.md       # raw note, never edited
-      SUMMARY.md                       # generated current state
+      SUMMARY.md                       # generated latest-state + dedupe document
       CHANGELOG.md                     # generated change history
   .mindfresh/
     manifest.sqlite                    # internal state for this vault only
@@ -30,7 +38,7 @@ Flow:
 2. You enable only the vaults you want watched.
 3. `mindfresh watch --all-enabled` watches enabled registered vaults only.
 4. New or changed raw `.md` files trigger a per-topic refresh.
-5. Generated files are excluded from source ingestion to avoid self-summarizing loops.
+5. Generated files are excluded from source ingestion to avoid self-ingestion loops.
 6. Raw notes remain byte-for-byte unchanged.
 
 ## Quick start
@@ -173,6 +181,7 @@ For Ollama, `doctor` checks `/api/tags` to confirm the configured model is insta
 - Each vault has its own `.mindfresh/manifest.sqlite`.
 - Raw source notes are never modified, moved, renamed, or deleted.
 - `SUMMARY.md` and `CHANGELOG.md` are generated files and are never re-ingested as raw sources.
+- `SUMMARY.md` is a latest-state/dedupe artifact, not a lossy short summary.
 - No-op refreshes should preserve generated hashes and avoid changelog noise.
 
 ## Implementation phases
@@ -184,7 +193,7 @@ High-level phases:
 1. Scaffold, `mindfresh init`, vault registry, status/doctor, fake adapter CI path.
 2. Scanner, generated-file exclusions, source hashing, raw immutability.
 3. Manifest, invalidation, no-op idempotence.
-4. Summary/changelog schemas and atomic writer.
+4. Latest-state/changelog schemas and atomic writer.
 5. Refresh pipeline with fake adapter.
 6. Watch mode with debounced per-topic refresh.
 7. MLX/Ollama local model adapters.

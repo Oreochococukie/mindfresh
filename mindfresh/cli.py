@@ -251,7 +251,7 @@ def refresh(
     model: Optional[str] = typer.Option(None, help="Override model id/path for this run."),
     force: bool = typer.Option(False),
 ) -> None:
-    """Refresh generated SUMMARY.md and CHANGELOG.md files with a local adapter."""
+    """Refresh generated latest/dedupe artifacts with a local adapter."""
     cfg = _load_or_exit(_config_path())
     vault = get_vault(cfg, vault_or_path)
     vault_root = Path(vault.path if vault is not None else vault_or_path).expanduser()

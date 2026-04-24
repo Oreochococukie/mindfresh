@@ -161,7 +161,7 @@ def _refresh_topic_with_connection(
             timestamp=timestamp,
             run_id=run_id,
             trigger_files=trigger_files,
-            summary_delta=result.summary_delta,
+            update_delta=result.update_delta,
             updated_claims=result.updated_claims,
             stale_or_conflicting_claims=result.stale_or_conflicting_claims,
             source_refs=source_refs,

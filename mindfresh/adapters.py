@@ -13,10 +13,10 @@ from urllib import error, request
 OLLAMA_HOST_ENV_VAR = "MINDFRESH_OLLAMA_HOST"
 MLX_COMMAND_ENV_VAR = "MINDFRESH_MLX_COMMAND"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_MAX_TOKENS = 1200
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_TIMEOUT_S = 600.0
-MAX_SOURCE_CHARS = 6000
+MAX_SOURCE_CHARS = 12000
 
 
 @dataclass(frozen=True)
@@ -29,12 +29,13 @@ class SourceDocument:
 @dataclass(frozen=True)
 class SummaryResult:
     freshness_state: str
-    current_conclusion: str
-    changed_recently: Sequence[str]
-    stable_facts: Sequence[str]
+    refreshed_context: str
+    freshness_updates: Sequence[str]
+    duplicate_groups: Sequence[str]
+    preserved_context: Sequence[str]
     stale_or_conflicting_claims: Sequence[str]
     open_questions: Sequence[str]
-    summary_delta: str
+    update_delta: str
     updated_claims: Sequence[str]
     model_profile: str
 
@@ -94,19 +95,27 @@ class FakeSummarizerAdapter:
 
         headlines = [_headline(src.content, fallback=src.relative_path) for src in sources]
         recent_headlines = [_headline(src.content, fallback=src.relative_path) for src in recent]
-        current = (
-            f"`{topic}` 주제는 로컬 원본 노트 {source_count}개를 반영합니다. "
-            f"최근 결정적 신호는 {', '.join(recent_headlines[:3])}입니다."
+        refreshed_context = (
+            f"`{topic}` 주제는 요약하지 않고 로컬 원본 노트 {source_count}개의 "
+            "핵심 맥락을 최신 기준으로 다시 배열한 정리본입니다.\n\n"
+            + "\n".join(
+                f"- `{src.relative_path}`: {_headline(src.content, fallback=src.relative_path)}"
+                for src in sources
+            )
         )
 
-        changed = [
+        freshness_updates = [
             (
                 f"`{src.relative_path}` 파일이 추가 또는 변경한 로컬 근거: "
                 f"{_headline(src.content, fallback=src.relative_path)}"
             )
             for src in recent
         ]
-        stable = [f"유지되는 로컬 원본 신호: {headline}" for headline in headlines[:5]]
+        duplicate_groups = _duplicate_headline_groups(sources)
+        preserved_context = [
+            f"원본 맥락 보존: {headline}"
+            for headline in headlines[:5]
+        ]
 
         stale_conflicts: list[str] = []
         if freshness_state == "conflicts":
@@ -120,7 +129,7 @@ class FakeSummarizerAdapter:
 
         if freshness_state in {"conflicts", "stale-risk"}:
             questions = [
-                "인용된 로컬 원본 노트를 확인하고 어떤 주장이 이전 요약을 대체하는지 결정하세요."
+                "인용된 로컬 원본 노트를 확인하고 어떤 주장이 이전 정리본을 대체하는지 결정하세요."
             ]
         else:
             questions = [
@@ -128,7 +137,8 @@ class FakeSummarizerAdapter:
             ]
 
         delta = (
-            f"전체 원본 노트 {source_count}개 중 최근 원본 노트 {recent_count}개를 처리했습니다."
+            f"요약 생성 없이 전체 원본 노트 {source_count}개 중 최근 원본 노트 "
+            f"{recent_count}개를 최신화·중복제거 기준으로 처리했습니다."
         )
         updated_claims = [
             f"{topic}: {_headline(src.content, fallback=src.relative_path)}"
@@ -137,12 +147,13 @@ class FakeSummarizerAdapter:
 
         return SummaryResult(
             freshness_state=freshness_state,
-            current_conclusion=current,
-            changed_recently=changed,
-            stable_facts=stable,
+            refreshed_context=refreshed_context,
+            freshness_updates=freshness_updates,
+            duplicate_groups=duplicate_groups,
+            preserved_context=preserved_context,
             stale_or_conflicting_claims=stale_conflicts,
             open_questions=questions,
-            summary_delta=delta,
+            update_delta=delta,
             updated_claims=updated_claims,
             model_profile=self.model_profile,
         )
@@ -344,6 +355,29 @@ def _headline(content: str, *, fallback: str) -> str:
     return fallback
 
 
+def _duplicate_headline_groups(sources: Sequence[SourceDocument]) -> List[str]:
+    """Return deterministic duplicate groups for fake-adapter output."""
+
+    by_headline: Dict[str, List[str]] = {}
+    display: Dict[str, str] = {}
+    for source in sources:
+        headline = _headline(source.content, fallback=source.relative_path)
+        key = " ".join(headline.casefold().split())
+        by_headline.setdefault(key, []).append(source.relative_path)
+        display.setdefault(key, headline)
+
+    groups: List[str] = []
+    for key in sorted(by_headline):
+        paths = by_headline[key]
+        if len(paths) <= 1:
+            continue
+        groups.append(
+            f"`{display[key]}` 주장이 {', '.join(f'`{path}`' for path in paths)}에서 "
+            "반복되어 최신 정리본에는 한 번만 유지했습니다."
+        )
+    return groups
+
+
 def _resolve_mlx_command(command: Optional[str]) -> List[str]:
     raw = command or os.environ.get(MLX_COMMAND_ENV_VAR)
     if raw:
@@ -424,29 +458,33 @@ def _build_live_prompt(
         previous = previous[:MAX_SOURCE_CHARS] + "\n...[truncated]"
     return f"""당신은 로컬 우선 Markdown 연구 신선도 엔진 mindfresh입니다.
 
-작업: 아래에 제공된 로컬 원본 노트만 사용해서 주제 단위 요약을 갱신하세요.
+작업: 아래에 제공된 로컬 원본 노트만 사용해서 주제 단위 정리본을 최신화하고 중복을 제거하세요.
+중요: 이것은 요약 작업이 아닙니다. 원문의 날짜, 수치, 조건, 예외, 판단 근거, 비교 맥락을 가능한 한 보존하세요.
 
 규칙:
 - 원본 노트가 뒷받침하지 않는 사실을 만들지 마세요.
-- 낡았거나 충돌하는 주장을 명시적으로 표시하세요.
-- 신선도를 우선하세요. 최근 변경 노트가 변경점을 주도해야 합니다.
+- 의미가 같은 중복 주장은 최신/가장 구체적인 표현 하나로 합치고, 합친 출처를 중복 제거 내역에 남기세요.
+- 낡았거나 충돌하는 주장은 조용히 지우지 말고 명시적으로 표시하세요.
+- 신선도를 우선하세요. 최근 변경 노트가 기존 정리본과 충돌하면 최근 노트가 변경점을 주도해야 합니다.
+- 추상적인 한 문단 요약으로 압축하지 마세요. 주제별 하위 항목과 원문 세부 맥락을 유지한 Markdown 정리본을 작성하세요.
 - 사람에게 보이는 모든 값은 반드시 한국어로 작성하세요.
 - 영어 섹션명이나 영어 문장으로 답하지 마세요.
 - 유효한 JSON 객체 하나만 반환하세요. Markdown 코드블록으로 감싸지 마세요.
 
 필수 JSON key:
 - freshness_state: one of "fresh", "changed", "stale-risk", "conflicts"
-- current_conclusion: 한국어 문자열
-- changed_recently: 한국어 문자열 배열
-- stable_facts: 한국어 문자열 배열
+- refreshed_context: 한국어 Markdown 문자열. 짧은 요약이 아니라 중복을 제거한 최신 기준 정리본.
+- freshness_updates: 한국어 문자열 배열. 무엇이 최신화되었는지.
+- duplicate_groups: 한국어 문자열 배열. 어떤 중복을 하나로 합쳤는지.
+- preserved_context: 한국어 문자열 배열. 잘라내지 않고 보존한 중요한 원문 맥락.
 - stale_or_conflicting_claims: 한국어 문자열 배열
 - open_questions: 한국어 문자열 배열
-- summary_delta: 한국어 문자열
+- update_delta: 한국어 문자열
 - updated_claims: 한국어 문자열 배열
 
 주제: {topic}
 
-이전 생성 요약:
+이전 생성 정리본:
 {previous or "(없음)"}
 
 로컬 원본 노트:
@@ -473,17 +511,22 @@ def _parse_summary_result(raw: str, *, model_profile: str) -> SummaryResult:
     freshness = _coerce_freshness(data.get("freshness_state"))
     return SummaryResult(
         freshness_state=freshness,
-        current_conclusion=_coerce_text(
-            data.get("current_conclusion"),
-            "모델이 결론을 반환하지 않았습니다.",
+        refreshed_context=_coerce_text(
+            data.get("refreshed_context") or data.get("current_conclusion"),
+            "모델이 최신 기준 정리본을 반환하지 않았습니다.",
         ),
-        changed_recently=_coerce_text_list(data.get("changed_recently")),
-        stable_facts=_coerce_text_list(data.get("stable_facts")),
+        freshness_updates=_coerce_text_list(
+            data.get("freshness_updates") or data.get("changed_recently")
+        ),
+        duplicate_groups=_coerce_text_list(data.get("duplicate_groups")),
+        preserved_context=_coerce_text_list(
+            data.get("preserved_context") or data.get("stable_facts")
+        ),
         stale_or_conflicting_claims=_coerce_text_list(data.get("stale_or_conflicting_claims")),
         open_questions=_coerce_text_list(data.get("open_questions")),
-        summary_delta=_coerce_text(
-            data.get("summary_delta"),
-            "라이브 모델이 요약 갱신을 반환했습니다.",
+        update_delta=_coerce_text(
+            data.get("update_delta") or data.get("summary_delta"),
+            "라이브 모델이 최신화·중복제거 갱신을 반환했습니다.",
         ),
         updated_claims=_coerce_text_list(data.get("updated_claims")),
         model_profile=model_profile,
@@ -513,16 +556,17 @@ def _fallback_live_summary(raw: str, *, model_profile: str) -> SummaryResult:
     cleaned = raw.strip() or "라이브 모델이 빈 응답을 반환했습니다."
     return SummaryResult(
         freshness_state="changed",
-        current_conclusion=cleaned[:2000],
-        changed_recently=[
-            "라이브 모델 응답을 JSON으로 파싱하지 못해 원문 결론을 저장했습니다."
+        refreshed_context=cleaned[:4000],
+        freshness_updates=[
+            "라이브 모델 응답을 JSON으로 파싱하지 못해 원문 응답을 정리본 영역에 저장했습니다."
         ],
-        stable_facts=[],
+        duplicate_groups=[],
+        preserved_context=[],
         stale_or_conflicting_claims=[],
         open_questions=[
             "더 엄격한 프롬프트로 다시 실행하거나 인용된 원본 노트를 직접 확인하세요."
         ],
-        summary_delta="라이브 모델 응답이 fallback 파서를 통해 기록되었습니다.",
+        update_delta="라이브 모델 응답이 fallback 파서를 통해 기록되었습니다.",
         updated_claims=[],
         model_profile=model_profile,
     )

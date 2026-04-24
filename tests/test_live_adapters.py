@@ -28,12 +28,13 @@ class _FakeHTTPResponse:
 def _json_summary(**overrides: object) -> str:
     payload: dict[str, object] = {
         "freshness_state": "changed",
-        "current_conclusion": "Gemma 라이브 어댑터 요약입니다.",
-        "changed_recently": ["새 원본 노트가 반영되었습니다."],
-        "stable_facts": ["원본 노트가 근거 경계로 유지됩니다."],
+        "refreshed_context": "Gemma 라이브 어댑터 최신화·중복제거 정리본입니다.",
+        "freshness_updates": ["새 원본 노트가 반영되었습니다."],
+        "duplicate_groups": ["중복 주장을 하나로 합쳤습니다."],
+        "preserved_context": ["원본 노트가 근거 경계로 유지됩니다."],
         "stale_or_conflicting_claims": [],
         "open_questions": ["다음 모델 릴리스 노트를 수동으로 확인하세요."],
-        "summary_delta": "새 노트 하나가 주제 요약을 변경했습니다.",
+        "update_delta": "새 노트 하나가 주제 정리본을 최신화했습니다.",
         "updated_claims": ["업데이트된 로컬 주장입니다."],
     }
     payload.update(overrides)
@@ -67,8 +68,10 @@ def test_ollama_adapter_posts_generate_request_with_stream_disabled(
     assert payload["model"] == "gemma4:31b"
     assert payload["stream"] is False
     assert payload["format"] == "json"
+    assert "이것은 요약 작업이 아닙니다" in payload["prompt"]
+    assert "refreshed_context" in payload["prompt"]
     assert result.model_profile == "ollama/gemma4:31b"
-    assert result.current_conclusion == "Gemma 라이브 어댑터 요약입니다."
+    assert result.refreshed_context == "Gemma 라이브 어댑터 최신화·중복제거 정리본입니다."
 
 
 def test_ollama_diagnostics_checks_installed_model(monkeypatch) -> None:

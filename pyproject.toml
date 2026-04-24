@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mindfresh"
 version = "0.1.0"
-description = "Local-first Markdown freshness watcher for generated topic summaries."
+description = "Local-first Markdown freshness watcher for latest-state dedupe artifacts."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{name = "mindfresh contributors"}]

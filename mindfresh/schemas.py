@@ -3,14 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
-PROMPT_SCHEMA_VERSION = "mindfresh-summary-changelog-v2-ko"
+PROMPT_SCHEMA_VERSION = "mindfresh-refresh-dedupe-v3-ko"
 SUMMARY_KIND = "summary"
 CHANGELOG_KIND = "changelog"
 
 SUMMARY_SECTIONS = (
-    "현재 결론",
-    "최근 변경 사항",
-    "유지되는 안정적 사실",
+    "최신 기준 정리본",
+    "최신화 내역",
+    "중복 제거 내역",
+    "보존한 원문 맥락",
     "낡았거나 충돌하는 주장",
     "열린 질문 / 다음 확인",
     "검토한 출처",
@@ -37,7 +38,7 @@ class ChangelogEntry:
     timestamp: str
     run_id: str
     trigger_files: Sequence[str]
-    summary_delta: str
+    update_delta: str
     updated_claims: Sequence[str]
     stale_or_conflicting_claims: Sequence[str]
     source_refs: Sequence[SourceRef]
@@ -90,7 +91,7 @@ def render_summary(
     result: object,
     source_refs: Sequence[SourceRef],
 ) -> str:
-    """Render SUMMARY.md with required v1 frontmatter and sections.
+    """Render SUMMARY.md as a Korean refresh/dedupe artifact.
 
     The ``result`` object is intentionally structural to keep schema rendering
     decoupled from the concrete adapter implementation.
@@ -99,21 +100,27 @@ def render_summary(
     body = [
         render_frontmatter(SUMMARY_KIND, topic, run_id),
         "",
-        "# 요약",
+        "# 최신화·중복제거 정리본",
         "",
-        "## 현재 결론",
-        str(getattr(result, "current_conclusion")),
+        "## 최신 기준 정리본",
+        str(getattr(result, "refreshed_context")),
         "",
-        "## 최근 변경 사항",
+        "## 최신화 내역",
         _bullet(
-            getattr(result, "changed_recently"),
+            getattr(result, "freshness_updates"),
             "이번 실행에서 중요한 로컬 원본 변경은 감지되지 않았습니다.",
         ),
         "",
-        "## 유지되는 안정적 사실",
+        "## 중복 제거 내역",
         _bullet(
-            getattr(result, "stable_facts"),
-            "유지할 이전 안정적 사실이 아직 없습니다.",
+            getattr(result, "duplicate_groups"),
+            "명시적으로 병합할 중복 주장이 감지되지 않았습니다.",
+        ),
+        "",
+        "## 보존한 원문 맥락",
+        _bullet(
+            getattr(result, "preserved_context"),
+            "추가로 표시할 보존 맥락이 없습니다.",
         ),
         "",
         "## 낡았거나 충돌하는 주장",
@@ -137,6 +144,7 @@ def render_summary(
         f"- 신선도 상태: `{_freshness_label(getattr(result, 'freshness_state'))}`",
         f"- 모델/런타임 프로필: `{getattr(result, 'model_profile')}`",
         f"- 프롬프트 스키마 버전: `{PROMPT_SCHEMA_VERSION}`",
+        "- 처리 방식: `요약 아님; 최신화와 중복 제거 중심`",
         "",
     ]
     return "\n".join(body)
@@ -151,8 +159,8 @@ def render_changelog_entry(entry: ChangelogEntry) -> str:
             f"- 모델/런타임 프로필: `{entry.model_profile}`",
             "- 트리거 파일:",
             _bullet(entry.trigger_files, "변경된 원본 파일이 확인되지 않았습니다."),
-            "- 요약 변경점:",
-            f"  - {entry.summary_delta}",
+            "- 정리본 변경점:",
+            f"  - {entry.update_delta}",
             "- 업데이트된 주장:",
             _bullet(entry.updated_claims, "업데이트된 주장이 생성되지 않았습니다."),
             "- 낡았거나 충돌하는 주장:",
