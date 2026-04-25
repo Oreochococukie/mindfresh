@@ -14,7 +14,7 @@ Use `python3` in this repository because the worker/runtime environment does not
 
 The pytest suite is organized around the PRD/test-spec invariants:
 
-- `tests/test_config_ux.py` — first-run config creation and vault lifecycle UX without hand-editing config.
+- `tests/test_config_ux.py` — first-run setup, non-secret config show/export/import, secret redaction, and vault lifecycle UX without hand-editing config.
 - `tests/test_scanner_boundaries.py` — generated/internal/hidden exclusions, generated-never-reingested behavior, and raw-note immutability for scanning.
 - `tests/test_refresh_integration_contract.py` — fake refresh, manifest, idempotence, single-topic refresh isolation, and crash/retry contracts.
 - `tests/test_watch_contract.py` — enabled-vault allowlist semantics and a bounded watch debounce contract.
@@ -39,6 +39,36 @@ python3 -m pytest -q tests/test_refresh_integration_contract.py
 python3 -m pytest -q tests/test_watch_contract.py
 ```
 
+## Focused setup/config migration smoke
+
+Use this when changing the management UX surface:
+
+```bash
+tmpdir=$(mktemp -d)
+config="$tmpdir/mindfresh.toml"
+vault="$tmpdir/vault"
+export_file="$tmpdir/mindfresh-export.json"
+mkdir -p "$vault/research/topic-a"
+printf '# Topic A notes\n\nNew local generation note.\n' > "$vault/research/topic-a/source.md"
+
+python3 -m mindfresh --config "$config" setup \
+  --vault-name research \
+  --vault-path "$vault" \
+  --model-preset fake \
+  --non-interactive
+python3 -m mindfresh --config "$config" config show --json
+python3 -m mindfresh --config "$config" config export --output "$export_file"
+python3 -m mindfresh --config "$tmpdir/imported.toml" config import "$export_file"
+python3 -m mindfresh --config "$tmpdir/imported.toml" refresh research
+```
+
+Pass criteria:
+
+1. `setup` registers only the explicit `--vault-path`.
+2. `config show --json` and `config export` are parseable and contain no API-key values.
+3. `config import` preserves existing paths, but imported missing paths are disabled with a warning.
+4. Fake refresh succeeds from the imported config.
+
 ## Manual fake-adapter smoke after refresh/watch integration
 
 ```bash
@@ -48,8 +78,11 @@ vault="$tmpdir/vault"
 mkdir -p "$vault/research/topic-a"
 printf '# Topic A notes\n\nNew local generation note.\n' > "$vault/research/topic-a/source.md"
 
-python3 -m mindfresh --config "$config" init
-python3 -m mindfresh --config "$config" vault add research "$vault"
+python3 -m mindfresh --config "$config" setup \
+  --vault-name research \
+  --vault-path "$vault" \
+  --model-preset fake \
+  --non-interactive
 python3 -m mindfresh --config "$config" refresh research --adapter fake
 python3 -m mindfresh --config "$config" refresh research --adapter fake
 python3 -m mindfresh --config "$config" watch --all-enabled --once --adapter fake

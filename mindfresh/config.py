@@ -241,26 +241,36 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
     return _coerce_toml(raw)
 
 
-def write_config(config: AppConfig, path: Optional[Path] = None) -> Path:
-    """Atomically write config to disk using a same-directory temp file."""
-    cfg_path = path or default_config_file()
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+def config_from_mapping(raw: Dict[str, Any]) -> AppConfig:
+    """Create config from a non-secret import/export mapping."""
+    return _coerce_toml(raw)
 
-    payload: Dict[str, Any] = {
+
+def config_dict(config: AppConfig) -> Dict[str, Any]:
+    """Return non-secret config data suitable for display and migration."""
+    return {
         "schema_version": config.schema_version,
         "default_adapter": config.default_adapter,
-        **({"default_model": config.default_model} if config.default_model is not None else {}),
+        "default_model": config.default_model,
         "model_profile": config.model_profile,
         "vaults": {
             name: {
                 "path": vault.path,
                 "enabled": vault.enabled,
-                **({"adapter": vault.adapter} if vault.adapter is not None else {}),
-                **({"model": vault.model} if vault.model is not None else {}),
+                "adapter": vault.adapter,
+                "model": vault.model,
             }
-            for name, vault in sorted(config.vaults.items(), key=lambda kv: kv[0])
+            for name, vault in sorted(config.vaults.items())
         },
     }
+
+
+def write_config(config: AppConfig, path: Optional[Path] = None) -> Path:
+    """Atomically write config to disk using a same-directory temp file."""
+    cfg_path = path or default_config_file()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = _omit_none_config_values(config_dict(config))
     toml_text = tomli_w.dumps(payload)
 
     tmp_name: Optional[str] = None
@@ -422,21 +432,17 @@ def config_diagnostics(
 
 def config_json(config: AppConfig) -> str:
     return json.dumps(
-        {
-            "schema_version": config.schema_version,
-            "default_adapter": config.default_adapter,
-            "default_model": config.default_model,
-            "model_profile": config.model_profile,
-            "vaults": {
-                name: {
-                    "path": vault.path,
-                    "enabled": vault.enabled,
-                    "adapter": vault.adapter,
-                    "model": vault.model,
-                }
-                for name, vault in sorted(config.vaults.items())
-            },
-        },
+        config_dict(config),
         indent=2,
         sort_keys=True,
     )
+
+
+def _omit_none_config_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _omit_none_config_values(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    return value

@@ -55,10 +55,15 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -e .
 ```
 
-Initialize config without hand-editing TOML:
+Run deterministic setup without hand-editing TOML. The vault path is explicit:
+`mindfresh` never searches your home, Desktop, Documents, or Markdown note folder folders.
 
 ```bash
-mindfresh init
+mindfresh setup \
+  --vault-name research \
+  --vault-path ~/Documents/MindfreshDemoVault \
+  --model-preset gemini-3-flash \
+  --non-interactive
 ```
 
 The default preset is `gemini-3-flash`, which uses the Google Gemini API model
@@ -69,11 +74,10 @@ export GOOGLE_API_KEY="your-google-api-key"
 # GEMINI_API_KEY is also accepted.
 ```
 
-Register only the vaults you want `mindfresh` to know about:
+Check the non-secret config state:
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault --model-preset gemini-3-flash
-mindfresh vault list
+mindfresh config show --json
 mindfresh vault status research
 ```
 
@@ -97,11 +101,27 @@ API key is set:
 mindfresh watch --all-enabled --once
 ```
 
+Move non-secret config to another Mac:
+
+```bash
+mindfresh config export --output mindfresh-config.json
+# copy mindfresh-config.json to the other Mac
+mindfresh config import mindfresh-config.json
+```
+
+Exports do not include API-key values. During import, vault paths that do not
+exist on the target Mac are imported as disabled and must be fixed/re-enabled
+explicitly.
+
 ## Vault management UX
 
 Vault management does not require editing config files:
 
 ```bash
+mindfresh setup --vault-name research --vault-path ~/Documents/MindfreshDemoVault --model-preset gemini-3-flash
+mindfresh config show --json
+mindfresh config export --output mindfresh-config.json
+mindfresh config import mindfresh-config.json
 mindfresh vault add research ~/Documents/MindfreshDemoVault
 mindfresh vault model research gemini-3-flash
 mindfresh vault enable research
@@ -163,8 +183,7 @@ export GEMINI_API_KEY="your-google-api-key"
 Use the default preset:
 
 ```bash
-mindfresh init
-mindfresh vault add docs ~/Documents/vault --model-preset gemini-3-flash
+mindfresh setup --vault-name docs --vault-path ~/Documents/vault --model-preset gemini-3-flash
 mindfresh doctor docs
 mindfresh refresh docs
 ```
@@ -251,6 +270,9 @@ For Google, `doctor` checks that `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set. Fo
 
 - No automatic home/Desktop/Documents scanning.
 - No automatic web/RSS/GitHub/paper crawling in v1.
+- `setup` writes vaults only from explicit `--vault-path` input.
+- `config export` is non-secret; API keys stay per-machine.
+- `config import` disables imported vaults whose paths are missing on the target Mac.
 - Only explicitly registered and enabled vaults are watched by `--all-enabled`.
 - Each vault has its own `.mindfresh/manifest.sqlite`.
 - Raw source notes are never modified, moved, renamed, or deleted.

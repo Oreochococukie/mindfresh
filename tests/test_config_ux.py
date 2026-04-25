@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,125 @@ def test_models_list_and_preset_vault_add(
     vault = config.load_config(isolated_config).vaults["small"]
     assert vault.adapter == "ollama"
     assert vault.model == "qwen3:14b"
+
+
+def test_setup_registers_only_explicit_vault_path(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "setup",
+            "--model-preset",
+            "fake",
+            "--vault-name",
+            "docs",
+            "--vault-path",
+            str(vault_path),
+            "--non-interactive",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    loaded = config.load_config(isolated_config)
+    assert loaded.default_adapter == "fake"
+    assert loaded.default_model is None
+    assert loaded.vaults["docs"].path == str(vault_path.resolve())
+    assert loaded.vaults["docs"].enabled
+    assert "No vault registered" not in result.output
+
+
+def test_setup_without_vault_path_does_not_infer_common_directories(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    for relative in ("Documents", "Desktop", "Markdown note folder", "Documents/Markdown note folder"):
+        (fake_home / relative).mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = runner.invoke(
+        cli_app,
+        ["setup", "--model-preset", "fake", "--non-interactive"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert config.load_config(isolated_config).vaults == {}
+    assert "No vault registered" in result.output
+
+
+def test_config_show_json_and_export_redact_secret_sentinel(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_123"
+    monkeypatch.setenv("GOOGLE_API_KEY", sentinel)
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    setup = runner.invoke(
+        cli_app,
+        [
+            "setup",
+            "--model-preset",
+            "fake",
+            "--vault-name",
+            "docs",
+            "--vault-path",
+            str(vault_path),
+        ],
+    )
+    assert setup.exit_code == 0, setup.output
+
+    show = runner.invoke(cli_app, ["config", "show", "--json"])
+    assert show.exit_code == 0, show.output
+    parsed = json.loads(show.output)
+    assert parsed["vaults"]["docs"]["path"] == str(vault_path.resolve())
+    assert sentinel not in show.output
+
+    export_path = tmp_path / "mindfresh-export.json"
+    exported = runner.invoke(cli_app, ["config", "export", "--output", str(export_path)])
+    assert exported.exit_code == 0, exported.output
+    export_text = export_path.read_text(encoding="utf-8")
+    assert json.loads(export_text)["vaults"]["docs"]["enabled"] is True
+    assert sentinel not in export_text
+    assert sentinel not in exported.output
+    export_stdout = runner.invoke(cli_app, ["config", "export"])
+    assert export_stdout.exit_code == 0, export_stdout.output
+    assert json.loads(export_stdout.output)["vaults"]["docs"]["enabled"] is True
+    assert sentinel not in export_stdout.output
+
+
+def test_config_import_preserves_existing_paths_and_disables_missing_paths(
+    runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
+) -> None:
+    existing = tmp_path / "existing-vault"
+    existing.mkdir()
+    missing = tmp_path / "missing-vault"
+    payload = {
+        "schema_version": 1,
+        "default_adapter": "google",
+        "default_model": "gemini-3-flash-preview",
+        "model_profile": "google/gemini-3-flash-preview",
+        "vaults": {
+            "existing": {"path": str(existing), "enabled": True, "adapter": "fake"},
+            "missing": {"path": str(missing), "enabled": True, "adapter": "fake"},
+        },
+    }
+    source = tmp_path / "export.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = runner.invoke(cli_app, ["config", "import", str(source)])
+
+    assert result.exit_code == 0, result.output
+    loaded = config.load_config(isolated_config)
+    assert loaded.vaults["existing"].enabled is True
+    assert loaded.vaults["missing"].enabled is False
+    assert "WARNING vault missing" in result.output
 
 
 def test_fake_preset_vault_does_not_inherit_default_google_model(

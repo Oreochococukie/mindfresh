@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import NoReturn, Optional
 
@@ -12,7 +13,9 @@ from .config import (
     AppConfig,
     ConfigError,
     VaultConfig,
+    config_from_mapping,
     config_diagnostics,
+    config_json,
     describe_vault,
     load_config,
     resolve_effective_adapter_model,
@@ -35,8 +38,10 @@ from .watch import watch_once
 app = typer.Typer(help="mindfresh: local markdown freshness watcher", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage explicit vault registry", no_args_is_help=True)
 models_app = typer.Typer(help="List and select model presets", no_args_is_help=True)
+config_app = typer.Typer(help="Show, export, and import non-secret config", no_args_is_help=True)
 app.add_typer(vault_app, name="vault")
 app.add_typer(models_app, name="models")
+app.add_typer(config_app, name="config")
 
 
 @app.callback()
@@ -106,6 +111,88 @@ def init(
     typer.echo(f"Initialized mindfresh config: {written}")
     typer.echo("Use 'mindfresh vault ...' for normal vault changes; manual TOML editing is optional.")
     _print_doctor_summary(cfg, written)
+
+
+@app.command()
+def setup(
+    model_preset: str = typer.Option(
+        DEFAULT_MODEL_PRESET,
+        "--model-preset",
+        "--preset",
+        help="Default model preset to store in config.",
+    ),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Default adapter override."),
+    model: Optional[str] = typer.Option(None, "--model", help="Optional model identifier/path."),
+    vault_name: Optional[str] = typer.Option(
+        None,
+        "--vault-name",
+        help="Explicit vault name to register. Must be used with --vault-path.",
+    ),
+    vault_path: Optional[Path] = typer.Option(
+        None,
+        "--vault-path",
+        help="Explicit vault path to register. Mindfresh never auto-discovers vault paths.",
+    ),
+    enable: bool = typer.Option(True, "--enable/--disable", help="Enable the explicit vault."),
+    replace: bool = typer.Option(False, "--replace", help="Replace an existing vault record."),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Run deterministically without prompts; missing vault flags simply skip vault registration.",
+    ),
+) -> None:
+    """Guided, flag-first setup for a new Mac without editing TOML by hand."""
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    try:
+        selected_adapter, selected_model = _resolve_preset_adapter_model(
+            preset_name=model_preset,
+            adapter_override=adapter,
+            model_override=model,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    if selected_adapter is None:
+        _fail("setup requires an adapter or model preset")
+
+    cfg.default_adapter = selected_adapter
+    cfg.default_model = selected_model
+    cfg.model_profile = _profile_label(selected_adapter, selected_model)
+
+    registered_vault: Optional[str] = None
+    if vault_name is not None or vault_path is not None:
+        if vault_name is None or vault_path is None:
+            _fail("--vault-name and --vault-path must be provided together")
+        try:
+            cfg = add_vault(
+                cfg,
+                name=vault_name,
+                path=str(vault_path),
+                adapter=selected_adapter,
+                model=selected_model,
+                enabled=enable,
+                replace_existing=replace,
+            )
+        except ConfigError as exc:
+            _fail(str(exc))
+        registered_vault = vault_name
+
+    written = _save_or_exit(cfg, cfg_path)
+    typer.echo(f"Setup complete: {written}")
+    typer.echo(
+        f"Default model preset: {model_preset} "
+        f"({selected_adapter}, {selected_model or '[no model]'})"
+    )
+    if registered_vault is not None:
+        typer.echo(
+            "Registered explicit vault: "
+            f"{describe_vault(registered_vault, cfg.vaults[registered_vault])}"
+        )
+        typer.echo(f"Next: mindfresh doctor {registered_vault}")
+    else:
+        typer.echo("No vault registered. Pass --vault-name and --vault-path to add one explicitly.")
+    if non_interactive:
+        typer.echo("Non-interactive mode: no prompts were shown and no vault paths were inferred.")
 
 
 @vault_app.command("add")
@@ -279,6 +366,78 @@ def models_set_default(
         f"Set default model preset: {preset.name} "
         f"({preset.adapter}, {preset.model or '[no model]'})"
     )
+
+
+@config_app.command("show")
+def config_show(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print parseable non-secret JSON.",
+    ),
+) -> None:
+    """Show current non-secret config."""
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    if json_output:
+        typer.echo(config_json(cfg))
+        return
+    typer.echo(f"Config path: {cfg_path}")
+    typer.echo(f"Default adapter: {cfg.default_adapter}")
+    typer.echo(f"Default model: {cfg.default_model or 'unset'}")
+    typer.echo(f"Model profile: {cfg.model_profile}")
+    typer.echo(f"Configured vaults: {len(cfg.vaults)}")
+    for name in vault_names(cfg):
+        typer.echo(f"- {describe_vault(name, cfg.vaults[name])}")
+
+
+@config_app.command("export")
+def config_export(
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write non-secret config JSON to this file. Prints to stdout when omitted.",
+    ),
+) -> None:
+    """Export non-secret config JSON for migration to another Mac."""
+    cfg = _load_or_exit(_config_path())
+    payload = config_json(cfg)
+    if output is None:
+        typer.echo(payload)
+        return
+    output = output.expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(payload + "\n", encoding="utf-8")
+    typer.echo(f"Exported non-secret config: {output}")
+
+
+@config_app.command("import")
+def config_import(
+    source: Path = typer.Argument(..., help="Explicit non-secret config JSON export path."),
+) -> None:
+    """Import non-secret config JSON; missing vault paths are disabled with a warning."""
+    source = source.expanduser()
+    if not source.exists():
+        _fail(f"config import source does not exist: {source}")
+    if not source.is_file():
+        _fail(f"config import source must be a file: {source}")
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _fail(f"invalid config import JSON in {source}: {exc}")
+    if not isinstance(raw, dict):
+        _fail("config import JSON must be an object")
+    try:
+        imported = config_from_mapping(raw)
+    except ConfigError as exc:
+        _fail(str(exc))
+
+    warnings = _disable_missing_imported_vaults(imported)
+    written = _save_or_exit(imported, _config_path())
+    typer.echo(f"Imported non-secret config: {written}")
+    for warning in warnings:
+        typer.secho(f"WARNING {warning}", fg=typer.colors.YELLOW)
 
 
 @app.command()
@@ -481,6 +640,29 @@ def _print_doctor_summary(cfg: AppConfig, path: Path) -> None:
         typer.echo(f"PASS {item}")
     for item in failures:
         typer.echo(f"FAIL {item}")
+
+
+def _disable_missing_imported_vaults(cfg: AppConfig) -> list[str]:
+    warnings: list[str] = []
+    for name in vault_names(cfg):
+        vault = cfg.vaults[name]
+        path = vault.resolved_path
+        if path.exists() and path.is_dir():
+            continue
+        if vault.enabled:
+            cfg.vaults[name] = VaultConfig(
+                name=vault.name,
+                path=vault.path,
+                enabled=False,
+                adapter=vault.adapter,
+                model=vault.model,
+            )
+        warnings.append(
+            f"vault {name}: imported path is missing or not a directory ({path}); "
+            "imported disabled. Fix the path and run 'mindfresh vault enable "
+            f"{name}' explicitly."
+        )
+    return warnings
 
 
 def _resolve_adapter_model(
