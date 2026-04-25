@@ -54,8 +54,8 @@ def test_watch_debounce_refreshes_enabled_vault_only(tmp_path: Path) -> None:
         }
     )
 
-    (enabled_fixture.topic-a / "2026-04-24-watch.md").write_text("# watched\n", encoding="utf-8")
-    (disabled_fixture.topic-a / "2026-04-24-watch.md").write_text("# not watched\n", encoding="utf-8")
+    (enabled_fixture.topic_a / "2026-04-24-watch.md").write_text("# watched\n", encoding="utf-8")
+    (disabled_fixture.topic_a / "2026-04-24-watch.md").write_text("# not watched\n", encoding="utf-8")
 
     watch_once(cfg, debounce_ms=25, adapter="fake", timeout_s=2.0)
 

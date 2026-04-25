@@ -9,7 +9,7 @@ import subprocess
 import importlib.util
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
 from urllib import error, request
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from .model_presets import DEFAULT_GOOGLE_MODEL
 
@@ -44,6 +44,22 @@ class SummaryResult:
     update_delta: str
     updated_claims: Sequence[str]
     model_profile: str
+
+
+@dataclass(frozen=True)
+class GoogleModelInfo:
+    """Non-secret metadata returned by the Gemini API models.list endpoint."""
+
+    name: str
+    display_name: str
+    description: str
+    input_token_limit: Optional[int]
+    output_token_limit: Optional[int]
+    supported_generation_methods: Sequence[str]
+
+    @property
+    def model_id(self) -> str:
+        return self.name.removeprefix("models/")
 
 
 class SummarizerAdapter(Protocol):
@@ -301,7 +317,10 @@ class GoogleGeminiSummarizerAdapter(LiveLLMSummarizerAdapter):
             with request.urlopen(req, timeout=self.timeout_s) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
+            detail = _redact_secret_values(
+                exc.read().decode("utf-8", errors="replace").strip(),
+                self.api_key,
+            )
             message = f"google generation failed with HTTP {exc.code}"
             raise AdapterRuntimeError(f"{message}: {detail}" if detail else message) from exc
         except error.URLError as exc:
@@ -429,11 +448,139 @@ def adapter_diagnostics(name: str, *, model: Optional[str] = None) -> tuple[List
     return passes, failures
 
 
+def _redact_secret_values(text: str, *additional_values: Optional[str]) -> str:
+    redacted = text
+    secret_values = [
+        value.strip()
+        for value in (*additional_values, *(os.environ.get(name) for name in GOOGLE_API_KEY_ENV_VARS))
+        if value and value.strip()
+    ]
+    for value in sorted(set(secret_values), key=len, reverse=True):
+        redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
+
+
 def _google_api_key() -> Optional[str]:
     for env_var in GOOGLE_API_KEY_ENV_VARS:
         value = os.environ.get(env_var)
         if value and value.strip():
             return value.strip()
+    return None
+
+
+def list_google_models(
+    *,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    page_size: int = 100,
+    timeout_s: float = 30.0,
+    generation_method: Optional[str] = None,
+) -> List[GoogleModelInfo]:
+    """List Gemini API models available to the configured API key.
+
+    The API key is sent as a header and is never returned by this function.
+    When ``generation_method`` is set, only models advertising that supported
+    generation method are returned. For Mindfresh refreshes this is normally
+    ``generateContent``.
+    """
+
+    key = api_key or _google_api_key()
+    if not key:
+        joined = " or ".join(GOOGLE_API_KEY_ENV_VARS)
+        raise AdapterRuntimeError(f"google adapter requires {joined}")
+
+    selected_host = (host or os.environ.get(GOOGLE_API_HOST_ENV_VAR) or DEFAULT_GOOGLE_API_HOST)
+    selected_host = selected_host.rstrip("/")
+    page_token: Optional[str] = None
+    models: List[GoogleModelInfo] = []
+
+    while True:
+        params = {"pageSize": str(page_size)}
+        if page_token:
+            params["pageToken"] = page_token
+        req = request.Request(
+            f"{selected_host}/models?{urlencode(params)}",
+            headers={"x-goog-api-key": key},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=timeout_s) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = _redact_secret_values(
+                exc.read().decode("utf-8", errors="replace").strip(),
+                key,
+            )
+            message = f"google model listing failed with HTTP {exc.code}"
+            raise AdapterRuntimeError(f"{message}: {detail}" if detail else message) from exc
+        except error.URLError as exc:
+            raise AdapterRuntimeError(
+                f"google model listing unavailable at {selected_host}; "
+                f"check network or {GOOGLE_API_HOST_ENV_VAR}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise AdapterRuntimeError("google model listing returned non-JSON response") from exc
+
+        raw_models = payload.get("models")
+        if not isinstance(raw_models, list):
+            raise AdapterRuntimeError("google model listing response did not include models[]")
+        for raw_model in raw_models:
+            if isinstance(raw_model, dict):
+                models.append(_google_model_info_from_mapping(raw_model))
+
+        token = payload.get("nextPageToken")
+        if not isinstance(token, str) or not token.strip():
+            break
+        page_token = token.strip()
+
+    if generation_method is None:
+        return models
+    return [
+        model
+        for model in models
+        if generation_method in model.supported_generation_methods
+    ]
+
+
+def list_google_generate_models(
+    *,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    page_size: int = 100,
+    timeout_s: float = 30.0,
+) -> List[GoogleModelInfo]:
+    """List Gemini API models that support models.generateContent."""
+
+    return list_google_models(
+        api_key=api_key,
+        host=host,
+        page_size=page_size,
+        timeout_s=timeout_s,
+        generation_method="generateContent",
+    )
+
+
+def _google_model_info_from_mapping(raw: Dict[str, Any]) -> GoogleModelInfo:
+    methods = raw.get("supportedGenerationMethods")
+    if not isinstance(methods, list):
+        methods = []
+    return GoogleModelInfo(
+        name=str(raw.get("name") or ""),
+        display_name=str(raw.get("displayName") or raw.get("name") or ""),
+        description=str(raw.get("description") or ""),
+        input_token_limit=_optional_int(raw.get("inputTokenLimit")),
+        output_token_limit=_optional_int(raw.get("outputTokenLimit")),
+        supported_generation_methods=tuple(item for item in methods if isinstance(item, str)),
+    )
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
     return None
 
 

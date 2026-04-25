@@ -10,7 +10,7 @@ Local-first Markdown freshness/dedupe watcher for reducing research knowledge fr
 
 ## Why this exists
 
-Fast-moving topics like Research models, research workflows, policy policies, and AI tooling change every day. A week-old note can already be stale. `mindfresh` is designed to keep topic-level knowledge current without forcing you to reread every raw note.
+Fast-moving topics like AI tools, product policies, technical standards, and research workflows change every day. A week-old note can already be stale. `mindfresh` is designed to keep topic-level knowledge current without forcing you to reread every raw note.
 
 The generated `SUMMARY.md` is intentionally not a short abstract. It is a Korean latest-state document that:
 
@@ -50,7 +50,7 @@ user-owned install under `~/.mindfresh`, without `sudo`, shell-profile edits, or
 background daemons.
 
 ```bash
-git clone https://github.com/Oreochococukie/mindfresh.git
+git clone https://github.com/YOUR-ORG/mindfresh.git
 cd mindfresh
 ./install.sh
 export PATH="$HOME/.mindfresh/bin:$PATH"
@@ -63,7 +63,7 @@ mindfresh onboard
 ```
 
 The onboarding command asks you to paste the exact vault folder path. `mindfresh`
-never searches your home, Desktop, Documents, or Markdown note folder folders. It also never
+never searches your home, Desktop, Documents, or note folders. It also never
 asks you to type an API-key value into Mindfresh.
 
 Copy/paste non-interactive onboarding is also supported:
@@ -71,7 +71,7 @@ Copy/paste non-interactive onboarding is also supported:
 ```bash
 mindfresh onboard \
   --vault-name research \
-  --vault-path ~/Documents/MindfreshDemoVault \
+  --vault-path ~/Documents/ResearchVault \
   --model-preset gemini-3-flash \
   --non-interactive
 ```
@@ -112,7 +112,7 @@ mindfresh watch --all-enabled --once
 Use this path when contributing to the repo or debugging packaging behavior:
 
 ```bash
-git clone https://github.com/Oreochococukie/mindfresh.git
+git clone https://github.com/YOUR-ORG/mindfresh.git
 cd mindfresh
 python3 -m venv .venv
 source .venv/bin/activate
@@ -172,11 +172,11 @@ mindfresh doctor <vault-name>
 Vault management does not require editing config files:
 
 ```bash
-mindfresh setup --vault-name research --vault-path ~/Documents/MindfreshDemoVault --model-preset gemini-3-flash
+mindfresh setup --vault-name research --vault-path ~/Documents/ResearchVault --model-preset gemini-3-flash
 mindfresh config show --json
 mindfresh config export --output mindfresh-config.json
 mindfresh config import mindfresh-config.json
-mindfresh vault add research ~/Documents/MindfreshDemoVault
+mindfresh vault add research ~/Documents/ResearchVault
 mindfresh vault model research gemini-3-flash
 mindfresh vault enable research
 mindfresh vault disable archive
@@ -211,7 +211,7 @@ mindfresh watch --all-enabled --once
 One-off explicit path watch is allowed but does not auto-register the path:
 
 ```bash
-mindfresh watch ~/Documents/MindfreshDemoVault --once
+mindfresh watch ~/Documents/ResearchVault --once
 ```
 
 The long-running watcher daemon is intentionally deferred; the current slice exposes `--once` so the refresh contract can be tested safely before background scheduling is added.
@@ -247,6 +247,23 @@ mindfresh keys status
 `mindfresh keys status` reports only presence/absence and accepted variable names.
 `mindfresh keys help` prints copy/paste-safe setup commands. Neither command prints
 the actual API-key value.
+
+To list and pick from the models that your current API key can actually access:
+
+```bash
+# list only
+mindfresh models google --non-interactive
+
+# choose a repo-wide default from a numbered menu
+mindfresh models google --set-default
+
+# choose a model for one registered vault
+mindfresh models google --vault docs
+```
+
+Mindfresh calls Google's model listing endpoint, shows only models that support
+`generateContent`, and stores the selected model id for you. You do not need to
+type model names manually.
 
 Use the default preset:
 
@@ -284,7 +301,7 @@ Built-in presets include:
 If your local model is an MLX-compatible model path, register the vault with the model path:
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault \
+mindfresh vault add research ~/Documents/ResearchVault \
   --adapter mlx \
   --model /path/to/your/gemma-4-31b-mlx-model
 
@@ -303,7 +320,7 @@ mindfresh refresh research
 If your model is served by Ollama, use the Ollama model id:
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault \
+mindfresh vault add research ~/Documents/ResearchVault \
   --adapter ollama \
   --model your-gemma-4-31b-model-id
 

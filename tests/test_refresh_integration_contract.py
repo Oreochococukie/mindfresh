@@ -52,7 +52,7 @@ def test_fake_refresh_creates_generated_outputs_manifest_and_preserves_raw_notes
 
     _refresh_or_xfail(CliRunner(), app, fixture.root)
 
-    for topic in [fixture.topic-a, fixture.z_image, fixture.policy-platform]:
+    for topic in [fixture.topic_a, fixture.topic_b, fixture.compliance]:
         summary = topic / "SUMMARY.md"
         changelog = topic / "CHANGELOG.md"
         assert summary.exists()
@@ -90,19 +90,19 @@ def test_incremental_topic_refresh_updates_only_changed_topic(
     before = generated_hashes(fixture.root)
     assert before
 
-    new_note = fixture.topic-a / "2026-04-24-new-finding.md"
+    new_note = fixture.topic_a / "2026-04-24-new-finding.md"
     new_note.write_text(
         "# New finding\n\nTopic A now needs an explicit scheduler check.\n", encoding="utf-8"
     )
-    _refresh_or_xfail(runner, app, fixture.root, "--topic", "research/topic-a")
+    _refresh_or_xfail(runner, app, fixture.root, "--topic", "research/topic_a")
 
     after = generated_hashes(fixture.root)
     changed = {path for path, digest in after.items() if before.get(path) != digest}
     assert changed == {
-        (fixture.topic-a / "SUMMARY.md").as_posix(),
-        (fixture.topic-a / "CHANGELOG.md").as_posix(),
+        (fixture.topic_a / "SUMMARY.md").as_posix(),
+        (fixture.topic_a / "CHANGELOG.md").as_posix(),
     }
-    assert "2026-04-24-new-finding.md" in (fixture.topic-a / "CHANGELOG.md").read_text(
+    assert "2026-04-24-new-finding.md" in (fixture.topic_a / "CHANGELOG.md").read_text(
         encoding="utf-8"
     )
 
@@ -159,6 +159,6 @@ def test_crash_window_retry_converges_without_raw_note_mutation(
     crash_refresh(fixture.root, crash_at="after_rename_before_manifest", adapter="fake")
     crash_refresh(fixture.root, crash_at=None, adapter="fake")
 
-    assert (fixture.topic-a / "SUMMARY.md").exists()
+    assert (fixture.topic_a / "SUMMARY.md").exists()
     assert (fixture.root / ".mindfresh" / "manifest.sqlite").exists()
     assert markdown_hashes(raw_markdown_files(fixture.root)) == raw_before

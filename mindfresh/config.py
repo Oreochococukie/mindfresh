@@ -9,7 +9,7 @@ import re
 import tempfile
 
 try:
-    import tomllib
+    import tomllib  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 
@@ -110,6 +110,7 @@ def resolve_effective_adapter_model(
     if model_preset:
         preset = get_model_preset(model_preset)
         selected_adapter = adapter_override or preset.adapter
+        selected_model: Optional[str]
         if model_override is not None:
             selected_model = model_override
         elif adapter_override and (

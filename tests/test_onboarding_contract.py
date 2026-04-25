@@ -82,7 +82,7 @@ def test_onboard_guided_stdin_registers_vault_without_discovery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_home = tmp_path / "home"
-    for relative in ("Documents", "Desktop", "Markdown note folder", "Documents/Markdown note folder"):
+    for relative in ("Documents", "Desktop", "Notes", "Documents/Notes"):
         (fake_home / relative).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
     vault_path = _make_vault(tmp_path)
@@ -98,7 +98,7 @@ def test_onboard_guided_stdin_registers_vault_without_discovery(
     assert list(loaded.vaults) == ["docs"]
     assert loaded.vaults["docs"].path == str(vault_path.resolve())
     assert loaded.vaults["docs"].adapter == "fake"
-    assert str(fake_home / "Markdown note folder") not in result.output
+    assert str(fake_home / "Notes") not in result.output
 
 
 def test_onboard_rejects_missing_vault_path_without_saving(

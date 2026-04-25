@@ -2,15 +2,15 @@
 
 ## Metadata
 
-- Source requirements: `.omx/specs/deep-interview-markdown-knowledge-refresh.md`
-- Context snapshot: `.omx/context/markdown-knowledge-refresh-20260424T071810Z.md`
+- Source requirements: `docs/specs/deep-interview-markdown-knowledge-refresh.md`
+- Context snapshot: historical planning notes
 - Planning mode: `$ralplan` consensus, RALPLAN-DR short mode
 - Product type: greenfield local CLI/daemon
 - Date: 2026-04-24
 
 ## Problem
 
-The user manages many fast-changing research topics in Markdown/Markdown note folder-style folders. Existing notes become stale as new model, Research node, policy, or policy-platform information arrives. The bottleneck is not saving notes; it is re-reading and reconciling them repeatedly.
+Users manage many fast-changing research topics in folder-based Markdown vaults. Existing notes become stale as new model, tooling update, policy, or policy/compliance information arrives. The bottleneck is not saving notes; it is re-reading and reconciling them repeatedly.
 
 ## V1 Goal
 
@@ -18,9 +18,9 @@ Build a local-first tool, `mindfresh`, that watches topic folders for user-added
 
 ## Non-goals
 
-1. No automatic web/RSS/paper/GitHub/Research-registry crawling in v1.
+1. No automatic web/RSS/paper/GitHub/domain-specific registry crawling in v1.
 2. No modification, deletion, movement, or renaming of raw source Markdown notes.
-3. No requirement to build an Markdown note folder plugin, GUI, vector DB, or RAG search in v1.
+3. No requirement to build an editor plugin, GUI, vector DB, or RAG search in v1.
 4. No cloud/paid API requirement in v1.
 5. No guarantee that generated summaries reflect the whole internet; v1 freshness is defined only relative to local Markdown inputs in the watched vault.
 
@@ -28,7 +28,7 @@ Build a local-first tool, `mindfresh`, that watches topic folders for user-added
 
 1. **Freshness-first:** newly added/changed local Markdown must be reflected quickly in generated topic state.
 2. **Raw immutability:** raw notes are read-only. Generated files and internal manifests are the only writable artifacts.
-3. **Low cognitive overhead:** generated summaries should reduce reading and reconciliation effort.
+3. **Low operational overhead:** generated summaries should reduce reading and reconciliation effort.
 4. **Local-first, adapter-backed inference:** model/runtime can change without changing scanner/manifest/writer correctness.
 5. **Deterministic shell around LLM:** source detection, hashing, idempotence, generated-file boundaries, and atomic writes must be testable without a live LLM.
 
@@ -39,14 +39,14 @@ Build a local-first tool, `mindfresh`, that watches topic folders for user-added
 A power user/researcher maintaining a local Markdown vault across topics such as:
 
 ```text
-vault/research/topic-a/
-vault/research/topic-b/
-vault/policy/policy-platform/
+vault/research/model-evaluations/
+vault/research/tooling-updates/
+vault/policy/compliance/
 ```
 
 ### Core use cases
 
-1. User drops a new `.md` research note into `vault/research/topic-a/`.
+1. User drops a new `.md` research note into `vault/research/model-evaluations/`.
 2. `mindfresh watch vault/` detects the file and refreshes only that topic folder.
 3. `SUMMARY.md` reflects current conclusions and stale/conflicting claims.
 4. `CHANGELOG.md` records what changed, why, and which source files triggered it.
@@ -77,30 +77,30 @@ Recommended phased UX:
 
 - v1.0 developer/MVP: CLI wizard + vault manager + status/doctor.
 - v1.1 local-user polish: optional menubar app or simple local web UI wrapping the same daemon.
-- v2.0 Markdown note folder plugin only if core workflow proves useful.
+- v2.0 editor plugin only if core workflow proves useful.
 
 ### Multi-vault selection / allowlist
 
-The user may have many Markdown/Markdown note folder vaults. `mindfresh` must watch **only explicitly registered or explicitly passed vaults**. It must never auto-discover and watch all folders under Desktop, Documents, iCloud, or the user home directory.
+Users may have many folder-based Markdown vaults. `mindfresh` must watch **only explicitly registered or explicitly passed vaults**. It must never auto-discover and watch all folders under Desktop, Documents, iCloud, or the user home directory.
 
 Recommended registry location:
 
 ```toml
 # ~/.config/mindfresh/config.toml
 [vaults.research]
-path = "<user-home>/Markdown note folder/Research"
+path = "/path/to/research-vault"
 enabled = true
 adapter = "mlx"
-model = "<user-home>/models/gemma4-31b"
+model = "/path/to/local-model"
 
 [vaults.policy]
-path = "<user-home>/Markdown note folder/Policy"
+path = "/path/to/policy-vault"
 enabled = true
 adapter = "mlx"
-model = "<user-home>/models/gemma4-31b"
+model = "/path/to/local-model"
 
 [vaults.archive]
-path = "<user-home>/Markdown note folder/Archive"
+path = "/path/to/archive-vault"
 enabled = false
 ```
 
@@ -276,7 +276,7 @@ Pros:
 
 Cons:
 
-- CLI UX before Markdown note folder-native UX.
+- CLI UX before editor-native UX.
 - MLX model availability must be validated.
 - SQLite adds small operational complexity.
 
@@ -285,7 +285,7 @@ Cons:
 Pros:
 
 - Simple watcher ecosystem and HTTP local-server flow.
-- Easier future Markdown note folder plugin reuse.
+- Easier future editor plugin reuse.
 
 Cons:
 
@@ -293,7 +293,7 @@ Cons:
 - Depends on Ollama service lifecycle.
 - Harder to keep model/runtime internals close to Python ML tooling.
 
-### Option C — Markdown note folder plugin first
+### Option C — editor plugin first
 
 Pros:
 
@@ -386,7 +386,7 @@ Cons:
 
 ## Out-of-scope Follow-ups
 
-- Markdown note folder plugin.
+- editor plugin.
 - Web/RSS/source monitoring.
 - Vector search/RAG.
 - Review-draft workflow.

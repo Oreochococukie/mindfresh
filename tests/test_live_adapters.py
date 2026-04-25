@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 from pathlib import Path
@@ -57,7 +58,7 @@ def test_ollama_adapter_posts_generate_request_with_stream_disabled(
     adapter = get_adapter("ollama", model="gemma4:31b")
 
     result = adapter.summarize(
-        topic="research/topic-a",
+        topic="research/topic_a",
         sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         previous_summary=None,
@@ -106,7 +107,7 @@ def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None
     adapter = get_adapter("google")
 
     result = adapter.summarize(
-        topic="policy/policy-platform",
+        topic="policy/compliance",
         sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         previous_summary=None,
@@ -150,7 +151,7 @@ def test_google_adapter_strips_api_key_env_value(monkeypatch) -> None:
 
     adapter = get_adapter("google")
     adapter.summarize(
-        topic="policy/policy-platform",
+        topic="policy/compliance",
         sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         previous_summary=None,
@@ -182,7 +183,7 @@ def test_google_adapter_reports_block_reason(monkeypatch) -> None:
 
     with pytest.raises(adapters.AdapterRuntimeError, match="prompt blocked: SAFETY"):
         adapter.summarize(
-            topic="policy/policy-platform",
+            topic="policy/compliance",
             sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
             recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
             previous_summary=None,
@@ -198,6 +199,99 @@ def test_google_diagnostics_requires_api_key(monkeypatch) -> None:
     assert any("google adapter configured" in item for item in passes)
     assert any("API key missing" in item for item in failures)
 
+
+def test_google_model_listing_filters_generate_content_models(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+        captured["timeout"] = timeout
+        return _FakeHTTPResponse(
+            {
+                "models": [
+                    {
+                        "name": "models/gemini-3-flash-preview",
+                        "displayName": "Gemini 3 Flash Preview",
+                        "description": "Fast model",
+                        "inputTokenLimit": 1000000,
+                        "outputTokenLimit": 8192,
+                        "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    },
+                    {
+                        "name": "models/text-embedding-004",
+                        "displayName": "Embedding",
+                        "supportedGenerationMethods": ["embedContent"],
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+
+    models = adapters.list_google_generate_models()
+
+    assert [model.model_id for model in models] == ["gemini-3-flash-preview"]
+    assert models[0].display_name == "Gemini 3 Flash Preview"
+    assert models[0].input_token_limit == 1000000
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"
+    assert captured["headers"]["X-goog-api-key"] == "test-key"
+
+
+
+def test_google_model_listing_http_error_redacts_api_key(monkeypatch) -> None:
+    secret = "MF_SENTINEL_GOOGLE_SECRET_123"
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        raise adapters.error.HTTPError(
+            req.full_url,
+            403,
+            "Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(f'{{"error":"bad key {secret}"}}'.encode("utf-8")),
+        )
+
+    monkeypatch.setenv("GOOGLE_API_KEY", secret)
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(adapters.AdapterRuntimeError) as excinfo:
+        adapters.list_google_generate_models()
+
+    message = str(excinfo.value)
+    assert "google model listing failed with HTTP 403" in message
+    assert "[REDACTED]" in message
+    assert secret not in message
+
+
+def test_google_generation_http_error_redacts_api_key(monkeypatch) -> None:
+    secret = "MF_SENTINEL_GOOGLE_SECRET_456"
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        raise adapters.error.HTTPError(
+            req.full_url,
+            400,
+            "Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(f'{{"error":"bad key {secret}"}}'.encode("utf-8")),
+        )
+
+    monkeypatch.setenv("GOOGLE_API_KEY", secret)
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+    adapter = get_adapter("google")
+
+    with pytest.raises(adapters.AdapterRuntimeError) as excinfo:
+        adapter.summarize(
+            topic="policy/compliance",
+            sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+            recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+            previous_summary=None,
+        )
+
+    message = str(excinfo.value)
+    assert "google generation failed with HTTP 400" in message
+    assert "[REDACTED]" in message
+    assert secret not in message
 
 def test_ollama_diagnostics_checks_installed_model(monkeypatch) -> None:
     def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
@@ -223,10 +317,10 @@ def test_mlx_adapter_invokes_generate_command(monkeypatch) -> None:
 
     monkeypatch.setenv("MINDFRESH_MLX_COMMAND", "mlx_lm.generate")
     monkeypatch.setattr(adapters.subprocess, "run", fake_run)
-    adapter = get_adapter("mlx", model="/models/gemma-4-31b")
+    adapter = get_adapter("mlx", model="/models/local-test-model")
 
     result = adapter.summarize(
-        topic="research/topic-a",
+        topic="research/topic_a",
         sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
         previous_summary=None,
@@ -234,10 +328,10 @@ def test_mlx_adapter_invokes_generate_command(monkeypatch) -> None:
 
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
-    assert cmd[:4] == ["mlx_lm.generate", "--model", "/models/gemma-4-31b", "--prompt"]
+    assert cmd[:4] == ["mlx_lm.generate", "--model", "/models/local-test-model", "--prompt"]
     assert "--max-tokens" in cmd
     assert "--temp" in cmd
-    assert result.model_profile == "mlx//models/gemma-4-31b"
+    assert result.model_profile == "mlx//models/local-test-model"
     assert result.updated_claims == ["업데이트된 로컬 주장입니다."]
 
 
@@ -250,7 +344,7 @@ def test_registered_vault_model_is_used_when_refresh_has_no_override(
     monkeypatch.setattr(cli, "DEFAULT_CONFIG_FILE", cfg_path)
 
     vault = tmp_path / "vault"
-    topic = vault / "research" / "topic-a"
+    topic = vault / "research" / "topic_a"
     topic.mkdir(parents=True)
     (topic / "note.md").write_text("# Local Gemma note\n\nFresh claim.", encoding="utf-8")
 
@@ -265,7 +359,7 @@ def test_registered_vault_model_is_used_when_refresh_has_no_override(
             "--adapter",
             "fake",
             "--model",
-            "gemma4-31b-local",
+            "local-test-model",
         ],
     )
     assert add.exit_code == 0, add.output
@@ -274,4 +368,4 @@ def test_registered_vault_model_is_used_when_refresh_has_no_override(
     assert refresh.exit_code == 0, refresh.output
 
     summary = (topic / "SUMMARY.md").read_text(encoding="utf-8")
-    assert "모델/런타임 프로필: `fake/gemma4-31b-local`" in summary
+    assert "모델/런타임 프로필: `fake/local-test-model`" in summary

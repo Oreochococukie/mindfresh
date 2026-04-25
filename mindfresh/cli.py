@@ -5,7 +5,7 @@ import json
 import os
 import shlex
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import NoReturn, Optional, Sequence
 
 import click
 import typer
@@ -32,6 +32,9 @@ from .adapters import (
     GOOGLE_API_KEY_ENV_VARS,
     MLX_COMMAND_ENV_VAR,
     OLLAMA_HOST_ENV_VAR,
+    AdapterRuntimeError,
+    GoogleModelInfo,
+    list_google_generate_models,
 )
 from .model_presets import (
     DEFAULT_MODEL_PRESET,
@@ -476,6 +479,77 @@ def models_list() -> None:
     _print_model_presets()
 
 
+@models_app.command("google")
+def models_google(
+    set_default: bool = typer.Option(
+        False,
+        "--set-default",
+        help="Prompt to select one listed Google/Gemini model and store it as the default.",
+    ),
+    vault_name: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Prompt to select one listed Google/Gemini model for this registered vault.",
+    ),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="List models only; never prompt.",
+    ),
+) -> None:
+    """List generation-capable Google/Gemini models available to the current API key."""
+    if set_default and vault_name:
+        _fail("Use either --set-default or --vault, not both")
+    if non_interactive and (set_default or vault_name):
+        _fail("Use --non-interactive without --set-default or --vault")
+
+    try:
+        models = list_google_generate_models()
+    except AdapterRuntimeError as exc:
+        _fail(str(exc))
+    if not models:
+        _fail("No Google/Gemini models supporting generateContent were returned for this API key")
+
+    typer.echo("Google/Gemini models available for generateContent:")
+    for index, model in enumerate(models, start=1):
+        display = f" — {model.display_name}" if model.display_name else ""
+        limits = _format_google_model_limits(model)
+        typer.echo(f"{index}. {model.model_id}{display}{limits}")
+
+    if non_interactive:
+        return
+    if not set_default and vault_name is None:
+        typer.echo("To store one, rerun with --set-default or --vault <vault-name>.")
+        return
+
+    selected = _prompt_google_model_choice(models)
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    if set_default:
+        cfg.default_adapter = "google"
+        cfg.default_model = selected.model_id
+        cfg.model_profile = _profile_label("google", selected.model_id)
+        written = _save_or_exit(cfg, cfg_path)
+        typer.echo(f"Set default Google/Gemini model: {selected.model_id}")
+        typer.echo(f"Config written: {written}")
+        return
+
+    assert vault_name is not None
+    vault = get_vault(cfg, vault_name)
+    if vault is None:
+        _fail(f"Unknown vault: {vault_name}")
+    cfg.vaults[vault_name] = VaultConfig(
+        name=vault.name,
+        path=vault.path,
+        enabled=vault.enabled,
+        adapter="google",
+        model=selected.model_id,
+    )
+    written = _save_or_exit(cfg, cfg_path)
+    typer.echo(f"Set vault {vault_name} Google/Gemini model: {selected.model_id}")
+    typer.echo(f"Config written: {written}")
+
+
 @models_app.command("set-default")
 def models_set_default(
     model_preset: str = typer.Argument(..., help="Preset from 'mindfresh models list'."),
@@ -584,6 +658,9 @@ def keys_help() -> None:
     typer.echo("# GEMINI_API_KEY is also accepted if you prefer that variable name.")
     typer.echo(f"Optional API host override: export {GOOGLE_API_HOST_ENV_VAR}=<host>")
     typer.echo("Verify without printing the key: mindfresh keys status")
+    typer.echo("List selectable models for this key: mindfresh models google --non-interactive")
+    typer.echo("Choose a default model from the live list: mindfresh models google --set-default")
+    typer.echo("Choose a vault model from the live list: mindfresh models google --vault <vault-name>")
     typer.echo("Then run diagnostics: mindfresh doctor <vault-name>")
     typer.echo("Config export/import never includes API-key values.")
     typer.echo("Secret values are never printed by keys status/help or doctor.")
@@ -819,6 +896,7 @@ def _print_onboard_key_guidance(vault_name: str) -> None:
     typer.echo('  export GOOGLE_API_KEY="your-google-api-key"')
     typer.echo("  # GEMINI_API_KEY is also accepted")
     typer.echo("  mindfresh keys status")
+    typer.echo(f"  mindfresh models google --vault {shlex.quote(vault_name)}")
     typer.echo(f"  mindfresh doctor {vault_name}")
 
 
@@ -874,6 +952,8 @@ def _print_google_key_status() -> None:
     if not present:
         typer.echo('Next: export GOOGLE_API_KEY="your-google-api-key"')
         typer.echo("Next: mindfresh keys status")
+    else:
+        typer.echo("Next: mindfresh models google --non-interactive")
 
 
 def _present_env_vars(names: tuple[str, ...]) -> list[str]:
@@ -897,6 +977,11 @@ def _print_diagnostic_next_steps(
         )
         typer.echo('NEXT google-api-key: export GOOGLE_API_KEY="your-google-api-key"')
         typer.echo("NEXT google-api-key: mindfresh keys status")
+        typer.echo("NEXT google-models: list selectable models with `mindfresh models google --non-interactive`")
+        typer.echo(
+            "NEXT google-models: choose one with "
+            f"`mindfresh models google --vault {_vault_target_or_placeholder(target)}`"
+        )
         typer.echo(f"NEXT google-api-key: {_doctor_retry_command(target)}")
 
     if any("ollama host is not reachable" in item for item in lower_failures):
@@ -970,6 +1055,27 @@ def _print_model_recommendations_once(already_printed: bool) -> bool:
     for context, preset in model_preset_recommendations():
         typer.echo(f"- {context}: {preset}")
     return True
+
+
+def _format_google_model_limits(model: GoogleModelInfo) -> str:
+    limits: list[str] = []
+    if model.input_token_limit is not None:
+        limits.append(f"input={model.input_token_limit}")
+    if model.output_token_limit is not None:
+        limits.append(f"output={model.output_token_limit}")
+    return f" ({', '.join(limits)})" if limits else ""
+
+
+def _prompt_google_model_choice(models: Sequence[GoogleModelInfo]) -> GoogleModelInfo:
+    default = "1"
+    raw = typer.prompt("Select model number", default=default)
+    try:
+        selected_index = int(str(raw).strip())
+    except ValueError:
+        _fail("model selection must be a number from the displayed list")
+    if selected_index < 1 or selected_index > len(models):
+        _fail(f"model selection must be between 1 and {len(models)}")
+    return models[selected_index - 1]
 
 
 def _disable_missing_imported_vaults(cfg: AppConfig) -> list[str]:

@@ -2,20 +2,20 @@
 
 ## Scope
 
-This test spec validates the local-only freshness watcher described in `.omx/plans/prd-markdown-knowledge-refresh.md`.
+This test spec validates the local-only freshness watcher described in `docs/plans/prd-markdown-knowledge-refresh.md`.
 
 ## Test Fixtures
 
 ```text
 fixtures/vault/
   research/
-    topic-a/
+    model-evaluations/
       2026-04-01-baseline.md
       2026-04-20-comparison.md
-    topic-b/
+    tooling-updates/
       2026-04-10-baseline.md
   policy/
-    policy-platform/
+    compliance/
       2026-04-01-policy.md
 ```
 
@@ -114,10 +114,10 @@ Given fixture vault with raw notes only, when `mindfresh refresh fixtures/vault 
 
 ### Incremental single-topic refresh
 
-Given an initialized fixture vault, when a new raw note is added to `research/topic-a/` and refresh runs:
+Given an initialized fixture vault, when a new raw note is added to `research/model-evaluations/` and refresh runs:
 
-- only `research/topic-a/SUMMARY.md`, `research/topic-a/CHANGELOG.md`, and manifest state change;
-- `research/topic-b` and `policy/policy-platform` generated files remain unchanged;
+- only `research/model-evaluations/SUMMARY.md`, `research/model-evaluations/CHANGELOG.md`, and manifest state change;
+- `research/tooling-updates` and `policy/compliance` generated files remain unchanged;
 - changelog entry lists the new note as trigger.
 
 ### No-op idempotence
@@ -146,8 +146,8 @@ Using temp fixture vaults:
 Using a temp fixture vault:
 
 - start watcher with low debounce;
-- add one new `.md` file to `research/topic-a/`;
-- assert refresh occurs for `research/topic-a` only;
+- add one new `.md` file to `research/model-evaluations/`;
+- assert refresh occurs for `research/model-evaluations` only;
 - assert generated outputs update within bounded timeout.
 
 ### Crash/retry
@@ -164,7 +164,7 @@ Simulate crash after generated file write and before manifest update:
 
 - Install optional MLX dependencies.
 - Configure a small/fast model first.
-- Run `mindfresh refresh fixtures/vault --adapter mlx --topic research/topic-a`.
+- Run `mindfresh refresh fixtures/vault --adapter mlx --topic research/model-evaluations`.
 - Record latency, memory warnings, generated sections, and source references.
 
 ### Model profile comparison
@@ -190,6 +190,6 @@ mindfresh doctor fixtures/vault
 Optional local model smoke:
 
 ```bash
-mindfresh refresh fixtures/vault --adapter mlx --topic research/topic-a
-mindfresh refresh fixtures/vault --adapter ollama --topic research/topic-a
+mindfresh refresh fixtures/vault --adapter mlx --topic research/model-evaluations
+mindfresh refresh fixtures/vault --adapter ollama --topic research/model-evaluations
 ```

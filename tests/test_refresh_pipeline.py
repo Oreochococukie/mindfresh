@@ -10,7 +10,7 @@ def _sha(path: Path) -> str:
 
 def test_fake_refresh_writes_required_generated_files_and_preserves_raw(tmp_path: Path):
     vault = tmp_path / "vault"
-    topic = vault / "research" / "topic-a"
+    topic = vault / "research" / "topic_a"
     topic.mkdir(parents=True)
     raw = topic / "2026-04-24-research.md"
     raw.write_text("# Topic A update\n\nStable local claim.", encoding="utf-8")
@@ -18,7 +18,7 @@ def test_fake_refresh_writes_required_generated_files_and_preserves_raw(tmp_path
 
     results = refresh_vault(vault, adapter_name="fake")
 
-    assert [result.topic for result in results] == ["research/topic-a"]
+    assert [result.topic for result in results] == ["research/topic_a"]
     assert results[0].status == "refreshed"
     assert _sha(raw) == before_raw
 
@@ -41,7 +41,7 @@ def test_fake_refresh_writes_required_generated_files_and_preserves_raw(tmp_path
 
 def test_fake_refresh_is_idempotent_and_generated_files_are_not_reingested(tmp_path: Path):
     vault = tmp_path / "vault"
-    topic = vault / "policy" / "policy-platform"
+    topic = vault / "policy" / "compliance"
     topic.mkdir(parents=True)
     (topic / "2026-04-01-policy.md").write_text("# Policy note", encoding="utf-8")
 

@@ -9,8 +9,8 @@
 - Final ambiguity: **16%**
 - Threshold: **20%**
 - Rounds: 7
-- Context snapshot: `.omx/context/markdown-knowledge-refresh-20260424T071810Z.md`
-- Transcript: `.omx/interviews/markdown-knowledge-refresh-20260424T073025Z.md`
+- Context snapshot: historical planning notes
+- Transcript: historical interview notes
 - Prompt-safe initial-context summary: not needed; initial prompt was within safe budget.
 
 ## Clarity Breakdown
@@ -20,35 +20,35 @@
 | Intent Clarity | 0.90 | Freshness-first intent clarified. |
 | Outcome Clarity | 0.90 | Per-topic `SUMMARY.md` + `CHANGELOG.md`. |
 | Scope Clarity | 0.85 | Local Markdown watcher v1; no automatic web crawling. |
-| Constraint Clarity | 0.80 | Local-first, source-preserving, developer laptop-friendly design. |
+| Constraint Clarity | 0.80 | Local-first, source-preserving, developer desktop/laptop-friendly design. |
 | Success Criteria Clarity | 0.80 | Core pass/fail checks identified; exact thresholds to define in plan/test spec. |
 
 ## Intent
 
-사용자는 여러 빠르게 변하는 연구 주제를 병렬로 다루면서 “매번 새 자료를 다시 읽고 재검토해야 하는” 지식 최신화 부담을 줄이고 싶다. 이 프로젝트의 본질은 노트 앱을 새로 만드는 것이 아니라, 이미 쌓이는 Markdown 연구자료를 자동으로 압축·갱신해 **현재 믿을 수 있는 최신 상태**를 빠르게 회수하게 만드는 것이다.
+Operators managing many fast-moving Markdown research topics need a low-friction way to recover the current trusted state without repeatedly rereading every source note. The product is not a note app replacement; it refreshes generated Markdown artifacts from source notes while preserving the raw notes.
 
 v1의 최상위 원칙은 **최신성 우선(freshness-first)**이다.
 
 - 1순위: 새 Markdown 노트가 들어왔을 때 기존 주제 요약이 최신 상태로 갱신된다.
-- 2순위: 사용자가 원문 전체를 다시 읽지 않아도 핵심 변화와 현재 결론을 파악한다.
+- 2순위: Operators can understand important changes and the current conclusion without rereading every source file.
 - 3순위: 무엇 때문에 요약이 바뀌었는지 근거와 변경 이유를 추적한다.
 
 ## Desired Outcome
 
-사용자가 다음처럼 주제별 폴더를 유지한다.
+The operator maintains topic folders such as:
 
 ```text
 vault/
   research/
-    topic-a/
+    model-evaluations/
       2026-04-24-source-a.md
       2026-04-24-source-b.md
       SUMMARY.md
       CHANGELOG.md
-    topic-b/
+    tooling-updates/
       ...
   policy/
-    policy-platform/
+    compliance/
       ...
 ```
 
@@ -69,19 +69,19 @@ vault/
 6. 새 정보 반영, 변경 이유, 낡은/충돌 주장 표시.
 7. 로컬 LLM 런타임 사용 가능.
 8. 설계자가 요약 스키마, 로컬 LLM 런타임, 기술 스택을 선택 가능.
-9. developer laptop에서 무리 없이 실행되는 27B/32B급 양자화 로컬 모델 후보를 우선 검토.
+9. Prefer model/runtime options that run comfortably on common developer desktops or laptops; large local models are optional presets, not required for v1.
 10. 원문 보존: source notes는 read-only 취급.
 
 ## Out of Scope / Non-goals — v1
 
-1. 자동 웹/RSS/논문/GitHub/Research registry 크롤링 또는 수집.
+1. 자동 웹/RSS/논문/GitHub/domain-specific registry 크롤링 또는 수집.
 2. 원본 Markdown 파일 수정.
-3. 사용자의 명시적 요청 없이 원본 파일 삭제/이동/리네이밍.
-4. 최신성 판단을 “웹 전체의 최신 정보”로 보장하는 것. v1의 최신성은 **사용자가 폴더에 추가한 Markdown 입력 기준**이다.
+3. 운영자의 명시적 요청 없이 원본 파일 삭제/이동/리네이밍.
+4. Guaranteeing freshness against the entire web. In v1, freshness is based on **Markdown inputs explicitly added to watched folders**.
 
 명시적으로 제외되지 않은 항목이지만 계획 단계에서 비용 대비 검토할 항목:
 
-- Markdown note folder 플러그인화.
+- Markdown editor 플러그인화.
 - 벡터DB/RAG 검색 기능.
 - GUI/대시보드.
 - 클라우드 LLM fallback.
@@ -94,7 +94,7 @@ vault/
 - 로컬 LLM 런타임: 예: Ollama, llama.cpp, LM Studio, MLX 계열 등 후보 평가 후 선택.
 - 기술 스택: 예: Python/Node, SQLite/JSON manifest, watcher library, test fixtures 등.
 
-### 이미 사용자 답변으로 확정된 것
+### Confirmed product decisions
 
 - v1 최상위 원칙: **최신성 우선**.
 - v1 산출물: **topic folder별 `SUMMARY.md` + `CHANGELOG.md`**.
@@ -102,38 +102,38 @@ vault/
 - v1 review gate: 별도 승인 대기 초안이 아니라 생성 파일을 직접 갱신한다.
 - source files: 원문 Markdown은 수정하지 않는다.
 
-### 추가 확인이 필요한 경우
+### Decisions requiring maintainer confirmation
 
-아래는 계획/실행 중 발견되면 사용자 확인 또는 명시적 plan decision이 필요하다.
+The following require maintainer confirmation or an explicit plan decision when discovered during planning or execution.
 
 - 유료/클라우드 API 호출이 필요한 경우.
 - 모델 다운로드 용량이 매우 크거나 설정이 복잡한 경우.
-- Markdown note folder plugin/GUI/외부 수집 등 v1을 넘어서는 범위 확장.
+- editor plugin/GUI/외부 수집 등 v1을 넘어서는 범위 확장.
 - 원문 파일 이동/삭제/이름 변경.
 
 ## Constraints
 
 - Local-first design preferred.
-- Hardware target: Apple developer laptop, common memory unified memory.
+- Hardware target: common developer desktops/laptops; cloud fallback and small presets should remain available.
 - Local LLM should be comfortable enough for repeated background refresh; exact model/runtime must be benchmarked or at least validated in planning.
-- Keep maintenance burden low; the tool must not become another system the user has to babysit.
-- Preserve folder hierarchy and compatibility with Markdown note folder-style Markdown workflows.
-- Generated files must be distinguishable from user-authored raw notes.
+- Keep maintenance burden low; the tool must not become another system operators have to babysit.
+- Preserve folder hierarchy and compatibility with folder-based Markdown workflows.
+- Generated files must be distinguishable from source raw notes.
 
 ## Testable Acceptance Criteria
 
 Given a fixture vault:
 
 ```text
-fixtures/vault/research/topic-a/
-  2026-04-01-topic-a-baseline.md
-  2026-04-20-topic-b-comparison.md
+fixtures/vault/research/model-evaluations/
+  2026-04-01-model-evaluations-baseline.md
+  2026-04-20-tooling-updates-comparison.md
 ```
 
 When a new file is added:
 
 ```text
-2026-04-24-new-topic-a-node-findings.md
+2026-04-24-new-model-evaluations-node-findings.md
 ```
 
 and the watcher refreshes the folder, then:
@@ -164,11 +164,11 @@ and the watcher refreshes the folder, then:
 ### Assumption 3: “자동 갱신은 review draft가 필요할 수도 있다.”
 
 - Pressure: review draft lowers risk but increases friction and may preserve the knowledge freshness bottleneck.
-- Resolution: user selected **watcher + direct update**. Generated summary files update immediately; raw source notes remain immutable.
+- Resolution: the product uses **watcher + direct update**. Generated summary files update immediately; raw source notes remain immutable.
 
 ## Pressure-pass Findings
 
-Round 1 answer treated freshness, compression, and provenance as equally important. Round 2 forced the tradeoff: if v1 must not fail on one axis, choose the one. User selected freshness-first. This changed the design center from “knowledge management suite” to “freshness maintenance pipeline for topic summaries.”
+Round 1 answer treated freshness, compression, and provenance as equally important. Round 2 forced the tradeoff: if v1 must not fail on one axis, choose the one. The product selected freshness-first. This changed the design center from “knowledge management suite” to “freshness maintenance pipeline for topic summaries.”
 
 ## Technical Context Findings
 
@@ -186,13 +186,13 @@ Round 1 answer treated freshness, compression, and provenance as equally importa
 
 ### Evidence
 
-- User explicitly wants Markdown hierarchy similar to Markdown note folder.
-- User explicitly wants original summary/source files preserved and aggregate summary regenerated.
-- User explicitly selected freshness-first.
-- User explicitly excluded automatic web crawling for v1.
-- User explicitly selected summary + changelog.
-- User explicitly selected folder watcher + direct update.
-- User allowed design decisions for summary schema, local LLM runtime, and tech stack.
+- The product requires folder-based Markdown hierarchy.
+- The product requires original summary/source files preserved and aggregate summary regenerated.
+- The product uses freshness-first.
+- The product excludes automatic web crawling for v1.
+- The product uses summary + changelog.
+- The product uses folder watcher + direct update.
+- The implementation may own design decisions for summary schema, local LLM runtime, and tech stack.
 
 ### Inference
 
@@ -202,11 +202,11 @@ Round 1 answer treated freshness, compression, and provenance as equally importa
 
 ## Condensed Transcript
 
-1. User described knowledge freshness bottleneck from parallel fast-changing research topics and proposed Markdown topic folders with refreshed summaries.
+1. The target workflow covers parallel fast-changing research topics stored in Markdown topic folders with refreshed generated artifacts.
 2. Asked which failure v1 must solve first; user said freshness, compression, and provenance are all important.
 3. Forced tradeoff; user chose freshness-first.
 4. Asked non-goals; user excluded automatic web crawling and added no other non-goals.
-5. Asked decision boundaries; user allowed summary schema, local LLM runtime, and tech stack decisions.
+5. Asked decision boundaries; planning allowed summary schema, local LLM runtime, and tech stack decisions.
 6. Asked output form; user chose summary + changelog.
 7. Asked success criteria; user said all listed checks are important.
 8. Asked operational shape; user chose folder watcher + direct update.
@@ -225,21 +225,21 @@ Reason: requirements are now clear enough to stop interviewing, but architecture
 Suggested invocation:
 
 ```text
-$plan --consensus --direct .omx/specs/deep-interview-markdown-knowledge-refresh.md
+$plan --consensus --direct docs/specs/deep-interview-markdown-knowledge-refresh.md
 ```
 
 Alternative handoffs:
 
-- `$autopilot .omx/specs/deep-interview-markdown-knowledge-refresh.md` — use if direct plan+implementation is desired.
-- `$ralph .omx/specs/deep-interview-markdown-knowledge-refresh.md` — use if a persistent single-owner completion loop is desired after planning artifacts exist.
-- `$team .omx/specs/deep-interview-markdown-knowledge-refresh.md` — use if splitting lanes (watcher, summarizer, local LLM, tests, docs) becomes valuable.
-- Refine further — use only if you want stronger decisions on Markdown note folder plugin, vector DB, GUI, or cloud fallback before planning.
+- `$autopilot docs/specs/deep-interview-markdown-knowledge-refresh.md` — use if direct plan+implementation is desired.
+- `$ralph docs/specs/deep-interview-markdown-knowledge-refresh.md` — use if a persistent single-owner completion loop is desired after planning artifacts exist.
+- `$team docs/specs/deep-interview-markdown-knowledge-refresh.md` — use if splitting lanes (watcher, summarizer, local LLM, tests, docs) becomes valuable.
+- Refine further — use only if you want stronger decisions on editor plugin, vector DB, GUI, or cloud fallback before planning.
 
 ## Residual Risk
 
 Residual ambiguity is below threshold, but planning should still validate:
 
-- local model/runtime feasibility on developer laptop;
+- local model/runtime feasibility on common developer desktops/laptops;
 - direct-update safety and rollback story for generated files;
 - how to prevent generated summaries from being re-ingested as raw notes;
 - exact schema for stale/conflict markers;

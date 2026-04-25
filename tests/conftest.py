@@ -9,37 +9,37 @@ from typing import Iterable
 @dataclass(frozen=True)
 class FixtureVault:
     root: Path
-    topic-a: Path
-    z_image: Path
-    policy-platform: Path
+    topic_a: Path
+    topic_b: Path
+    compliance: Path
 
 
 def create_fixture_vault(tmp_path: Path) -> FixtureVault:
     """Create the PRD/test-spec fixture vault with raw notes only."""
     root = tmp_path / "vault"
-    topic-a = root / "research" / "topic-a"
-    z_image = root / "research" / "topic-b"
-    policy-platform = root / "policy" / "policy-platform"
+    topic_a = root / "research" / "topic_a"
+    topic_b = root / "research" / "topic-b"
+    compliance = root / "policy" / "compliance"
 
-    topic-a.mkdir(parents=True)
-    z_image.mkdir(parents=True)
-    policy-platform.mkdir(parents=True)
+    topic_a.mkdir(parents=True)
+    topic_b.mkdir(parents=True)
+    compliance.mkdir(parents=True)
 
-    (topic-a / "2026-04-01-baseline.md").write_text(
+    (topic_a / "2026-04-01-baseline.md").write_text(
         "# Topic A baseline\n\nTopic A workflow uses the baseline node set.\n", encoding="utf-8"
     )
-    (topic-a / "2026-04-20-comparison.md").write_text(
+    (topic_a / "2026-04-20-comparison.md").write_text(
         "# Topic A comparison\n\nA newer note changes recommended sampler settings.\n",
         encoding="utf-8",
     )
-    (z_image / "2026-04-10-baseline.md").write_text(
+    (topic_b / "2026-04-10-baseline.md").write_text(
         "# Topic B baseline\n\nTopic B keeps a separate topic state.\n", encoding="utf-8"
     )
-    (policy-platform / "2026-04-01-policy.md").write_text(
-        "# policy platform policy\n\nPolicy policy evidence belongs to its own topic.\n",
+    (compliance / "2026-04-01-policy.md").write_text(
+        "# Compliance policy\n\nPolicy policy evidence belongs to its own topic.\n",
         encoding="utf-8",
     )
-    return FixtureVault(root=root, topic-a=topic-a, z_image=z_image, policy-platform=policy-platform)
+    return FixtureVault(root=root, topic_a=topic_a, topic_b=topic_b, compliance=compliance)
 
 
 def hash_file(path: Path) -> str:

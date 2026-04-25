@@ -22,7 +22,7 @@ The pytest suite is organized around the PRD/test-spec invariants:
 - `tests/test_watch_contract.py` — enabled-vault allowlist semantics and a bounded watch debounce contract.
 - `tests/test_live_adapters.py` — mocked Ollama HTTP request shape, mocked MLX command invocation, and registered vault model selection.
 
-All deterministic local-refresh contracts are expected to pass. Live-model runtime tests remain manual because they depend on local MLX/Ollama installation and the user's downloaded model.
+All deterministic local-refresh contracts are expected to pass. Live-model runtime tests remain manual because they depend on local MLX/Ollama installation and a downloaded model.
 
 ## Expected local verification during recovery work
 
@@ -141,6 +141,8 @@ python3 -m mindfresh --config "$config" doctor docs || true
 Pass criteria:
 
 1. `keys status/help` mention `GOOGLE_API_KEY` and `GEMINI_API_KEY` but never print secret values.
+2. `models google --non-interactive` lists API-key-visible `generateContent` models without prompting.
+3. `models google --set-default` and `models google --vault <name>` store a numbered-menu selection, so users do not type model ids manually.
 2. `models list` includes "Recommended for this Mac" guidance for cloud, smaller local, quality local, and fake presets.
 3. Missing Google/Gemini credentials in `doctor` produce actionable next steps: export command, `mindfresh keys status`, and retry command.
 4. `doctor` exits non-zero on failing diagnostics without a traceback.

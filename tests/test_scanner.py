@@ -14,7 +14,7 @@ from mindfresh.scanner import (
 
 def test_detects_topics_and_ignores_generated(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
-    topic = vault / "research" / "topic-a"
+    topic = vault / "research" / "topic_a"
     topic.mkdir(parents=True)
     (topic / "a.md").write_text("# note", encoding="utf-8")
     (topic / "SUMMARY.md").write_text("# generated", encoding="utf-8")
@@ -22,7 +22,7 @@ def test_detects_topics_and_ignores_generated(tmp_path: Path) -> None:
 
     topics = detect_topics(vault)
     assert len(topics) == 1
-    assert topics[0].relative_path.as_posix() == "research/topic-a"
+    assert topics[0].relative_path.as_posix() == "research/topic_a"
     srcs = collect_topic_sources(topics[0])
     assert len(srcs) == 1
     assert srcs[0].name == "a.md"
@@ -30,7 +30,7 @@ def test_detects_topics_and_ignores_generated(tmp_path: Path) -> None:
 
 def test_scanner_prunes_hidden_internal_and_generated_boundaries(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
-    topic = vault / "research" / "topic-a"
+    topic = vault / "research" / "topic_a"
     topic.mkdir(parents=True)
     (topic / "raw.md").write_text("# source", encoding="utf-8")
     (topic / "generated-frontmatter.md").write_text(
@@ -40,21 +40,21 @@ def test_scanner_prunes_hidden_internal_and_generated_boundaries(tmp_path: Path)
     (topic / "CHANGELOG.md").write_text("# generated", encoding="utf-8")
     (vault / ".mindfresh").mkdir()
     (vault / ".mindfresh" / "internal.md").write_text("# internal", encoding="utf-8")
-    (topic / ".markdown note folder").mkdir()
-    (topic / ".markdown note folder" / "hidden.md").write_text("# hidden", encoding="utf-8")
+    (topic / ".notes").mkdir()
+    (topic / ".notes" / "hidden.md").write_text("# hidden", encoding="utf-8")
     (topic / "_generated").mkdir()
     (topic / "_generated" / "draft.md").write_text("# generated draft", encoding="utf-8")
     (topic / "_review").mkdir()
     (topic / "_review" / "review.md").write_text("# review", encoding="utf-8")
 
     topics = detect_topics(vault)
-    assert [topic.relative_path.as_posix() for topic in topics] == ["research/topic-a"]
+    assert [topic.relative_path.as_posix() for topic in topics] == ["research/topic_a"]
     sources = collect_topic_sources(topics[0])
     assert [source.name for source in sources] == ["raw.md"]
 
     snapshots = collect_topic_source_snapshots(topics[0])
     assert len(snapshots) == 1
-    assert snapshots[0].relative_path.as_posix() == "research/topic-a/raw.md"
+    assert snapshots[0].relative_path.as_posix() == "research/topic_a/raw.md"
     assert snapshots[0].sha256 == hash_file(topic / "raw.md")
     assert snapshots[0].size == len("# source")
 

@@ -18,7 +18,7 @@ from mindfresh.scanner import SourceSnapshot, Topic, collect_topic_source_snapsh
 
 def _make_vault(tmp_path: Path) -> tuple[Path, Path]:
     vault = tmp_path / "vault"
-    topic = vault / "research" / "topic-a"
+    topic = vault / "research" / "topic_a"
     topic.mkdir(parents=True)
     (topic / "raw.md").write_text("# raw", encoding="utf-8")
     return vault, topic
@@ -73,8 +73,8 @@ def test_manifest_detects_first_run_noop_source_and_config_changes(tmp_path: Pat
         sources=sources,
         config_hash=config_hash,
         generated_artifacts=(
-            GeneratedArtifact(Path("research/topic-a/SUMMARY.md"), None, hash_file(summary)),
-            GeneratedArtifact(Path("research/topic-a/CHANGELOG.md"), None, hash_file(changelog)),
+            GeneratedArtifact(Path("research/topic_a/SUMMARY.md"), None, hash_file(summary)),
+            GeneratedArtifact(Path("research/topic_a/CHANGELOG.md"), None, hash_file(changelog)),
         ),
         prompt_schema_version="summary-v1",
         adapter_name="fake",
@@ -93,8 +93,8 @@ def test_manifest_detects_first_run_noop_source_and_config_changes(tmp_path: Pat
     assert config_profile[0] == '{"temperature":0}'
 
     hashes = current_generated_hashes(vault, topic_path=topic.relative_path)
-    assert hashes["research/topic-a/SUMMARY.md"] == hash_file(summary)
-    assert hashes["research/topic-a/CHANGELOG.md"] == hash_file(changelog)
+    assert hashes["research/topic_a/SUMMARY.md"] == hash_file(summary)
+    assert hashes["research/topic_a/CHANGELOG.md"] == hash_file(changelog)
 
     noop_plan = plan_refresh(
         vault,
@@ -125,7 +125,7 @@ def test_manifest_detects_first_run_noop_source_and_config_changes(tmp_path: Pat
     )
     assert changed_plan.trigger_reason == "source_changed"
     assert [(change.relative_path.as_posix(), change.kind) for change in changed_plan.source_changes] == [
-        ("research/topic-a/raw.md", "modified")
+        ("research/topic_a/raw.md", "modified")
     ]
 
     new_config_hash = hash_config_profile(
@@ -166,7 +166,7 @@ def test_manifest_records_run_history_sources_and_generated_before_after(tmp_pat
         sources=sources,
         config_hash=config_hash,
         generated_artifacts=(
-            GeneratedArtifact(Path("research/topic-a/SUMMARY.md"), "0" * 64, hash_file(summary)),
+            GeneratedArtifact(Path("research/topic_a/SUMMARY.md"), "0" * 64, hash_file(summary)),
         ),
         run_id="run-1",
     )
@@ -183,16 +183,16 @@ def test_manifest_records_run_history_sources_and_generated_before_after(tmp_pat
             (record.run_id,),
         ).fetchone()
 
-    assert run["topic_path"] == "research/topic-a"
+    assert run["topic_path"] == "research/topic_a"
     assert run["trigger_reason"] == "first_run"
     assert run["no_op"] == 0
     assert dict(run_source) == {
-        "relative_path": "research/topic-a/raw.md",
+        "relative_path": "research/topic_a/raw.md",
         "sha256": sources[0].sha256,
         "change_kind": "new",
     }
     assert dict(run_generated) == {
-        "relative_path": "research/topic-a/SUMMARY.md",
+        "relative_path": "research/topic_a/SUMMARY.md",
         "before_sha256": "0" * 64,
         "after_sha256": hash_file(summary),
     }

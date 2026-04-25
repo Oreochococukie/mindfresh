@@ -7,6 +7,24 @@ import pytest
 from typer.testing import CliRunner
 
 from mindfresh import config
+from mindfresh.adapters import GoogleModelInfo
+
+
+def _google_model(
+    model_id: str,
+    *,
+    display_name: str,
+    input_token_limit: int | None = None,
+    output_token_limit: int | None = None,
+) -> GoogleModelInfo:
+    return GoogleModelInfo(
+        name=f"models/{model_id}",
+        display_name=display_name,
+        description="",
+        input_token_limit=input_token_limit,
+        output_token_limit=output_token_limit,
+        supported_generation_methods=("generateContent",),
+    )
 
 
 @pytest.fixture()
@@ -80,6 +98,107 @@ def test_models_list_and_preset_vault_add(
     assert vault.model == "qwen3:14b"
 
 
+def test_models_google_lists_and_prompts_to_set_default_without_secret(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import cli as cli_module
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_123"
+    monkeypatch.setenv("GOOGLE_API_KEY", sentinel)
+    monkeypatch.setattr(
+        cli_module,
+        "list_google_generate_models",
+        lambda: [
+            _google_model(
+                "gemini-3-flash-preview",
+                display_name="Gemini 3 Flash Preview",
+                input_token_limit=1000000,
+                output_token_limit=8192,
+            ),
+            _google_model("gemini-3-pro-preview", display_name="Gemini 3 Pro Preview"),
+        ],
+    )
+
+    result = runner.invoke(cli_app, ["models", "google", "--set-default"], input="2\n")
+
+    assert result.exit_code == 0, result.output
+    assert "1. gemini-3-flash-preview" in result.output
+    assert "2. gemini-3-pro-preview" in result.output
+    assert sentinel not in result.output
+    loaded = config.load_config(isolated_config)
+    assert loaded.default_adapter == "google"
+    assert loaded.default_model == "gemini-3-pro-preview"
+
+
+def test_models_google_selects_registered_vault_model(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import cli as cli_module
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    assert runner.invoke(cli_app, ["vault", "add", "docs", str(vault_path)]).exit_code == 0
+    monkeypatch.setattr(
+        cli_module,
+        "list_google_generate_models",
+        lambda: [
+            _google_model("gemini-3-flash-preview", display_name="Gemini 3 Flash Preview")
+        ],
+    )
+
+    result = runner.invoke(cli_app, ["models", "google", "--vault", "docs"], input="1\n")
+
+    assert result.exit_code == 0, result.output
+    vault = config.load_config(isolated_config).vaults["docs"]
+    assert vault.adapter == "google"
+    assert vault.model == "gemini-3-flash-preview"
+
+
+
+def test_models_google_rejects_conflicting_flags_before_api_call(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import cli as cli_module
+
+    def fail_if_called() -> list[GoogleModelInfo]:
+        raise AssertionError("model listing should not run for invalid flags")
+
+    monkeypatch.setattr(cli_module, "list_google_generate_models", fail_if_called)
+
+    result = runner.invoke(
+        cli_app, ["models", "google", "--set-default", "--vault", "docs"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Use either --set-default or --vault, not both" in result.output
+
+
+def test_models_google_rejects_non_interactive_store_flags_before_api_call(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import cli as cli_module
+
+    def fail_if_called() -> list[GoogleModelInfo]:
+        raise AssertionError("model listing should not run for invalid flags")
+
+    monkeypatch.setattr(cli_module, "list_google_generate_models", fail_if_called)
+
+    result = runner.invoke(cli_app, ["models", "google", "--set-default", "--non-interactive"])
+
+    assert result.exit_code == 2, result.output
+    assert "Use --non-interactive without --set-default or --vault" in result.output
+
 def test_setup_registers_only_explicit_vault_path(
     runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
 ) -> None:
@@ -113,7 +232,7 @@ def test_setup_without_vault_path_does_not_infer_common_directories(
     runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_home = tmp_path / "home"
-    for relative in ("Documents", "Desktop", "Markdown note folder", "Documents/Markdown note folder"):
+    for relative in ("Documents", "Desktop", "Notes", "Documents/Notes"):
         (fake_home / relative).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
 
@@ -342,17 +461,17 @@ def test_cli_vault_lifecycle_without_manual_config_editing(
     assert enable.exit_code == 0, enable.output
     assert config.load_config(isolated_config).vaults["research"].enabled
 
-    rename = runner.invoke(cli_app, ["vault", "rename", "research", "research"])
+    rename = runner.invoke(cli_app, ["vault", "rename", "research", "knowledge"])
     assert rename.exit_code == 0, rename.output
     loaded = config.load_config(isolated_config)
-    assert "research" in loaded.vaults
+    assert "knowledge" in loaded.vaults
     assert "research" not in loaded.vaults
 
-    status = runner.invoke(cli_app, ["vault", "status", "research"])
+    status = runner.invoke(cli_app, ["vault", "status", "knowledge"])
     assert status.exit_code == 0, status.output
-    assert "research" in status.output
+    assert "knowledge" in status.output
 
-    remove = runner.invoke(cli_app, ["vault", "remove", "research"])
+    remove = runner.invoke(cli_app, ["vault", "remove", "knowledge"])
     assert remove.exit_code == 0, remove.output
     assert config.load_config(isolated_config).vaults == {}
 
@@ -394,7 +513,7 @@ def test_watch_once_reports_adapter_failures_without_traceback(
 ) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    topic = tmp_path / "vault" / "research" / "topic-a"
+    topic = tmp_path / "vault" / "research" / "topic_a"
     topic.mkdir(parents=True)
     (topic / "source.md").write_text("# Topic A\n\nFresh local claim.\n", encoding="utf-8")
     vault_path = tmp_path / "vault"

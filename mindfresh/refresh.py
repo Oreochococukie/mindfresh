@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
+import sqlite3
 import uuid
 
 from .adapters import SourceDocument, get_adapter
@@ -16,6 +17,8 @@ from .manifest import (
     record_topic_run,
     snapshot_file,
     source_fingerprint,
+    TopicRunSource,
+    TopicRunState,
 )
 from .scanner import Topic, collect_topic_sources, detect_topics
 from .schemas import ChangelogEntry, SourceRef, render_changelog, render_summary
@@ -69,7 +72,7 @@ def refresh_topic(
     model_profile: str = "fake/deterministic-v1",
     dry_run: bool = False,
     force: bool = False,
-    conn: Optional[object] = None,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> RefreshResult:
     owns_connection = conn is None
     connection = connect(topic.vault_root) if conn is None else conn
@@ -81,11 +84,11 @@ def refresh_topic(
             model_profile=model_profile,
             dry_run=dry_run,
             force=force,
-            conn=connection,  # type: ignore[arg-type]
+            conn=connection,
         )
     finally:
         if owns_connection:
-            connection.close()  # type: ignore[attr-defined]
+            connection.close()
 
 
 def _refresh_topic_with_connection(
@@ -96,7 +99,7 @@ def _refresh_topic_with_connection(
     model_profile: str,
     dry_run: bool,
     force: bool,
-    conn: object,
+    conn: sqlite3.Connection,
 ) -> RefreshResult:
     adapter = get_adapter(adapter_name, model=adapter_model)
     topic_rel = topic.relative_path.as_posix()
@@ -113,7 +116,7 @@ def _refresh_topic_with_connection(
         model_profile=adapter.model_profile,
         source_hashes=before_by_path,
     )
-    state = load_topic_state(conn, topic_rel)  # type: ignore[arg-type]
+    state = load_topic_state(conn, topic_rel)
 
     if (
         state is not None
@@ -190,7 +193,7 @@ def _refresh_topic_with_connection(
         raise RuntimeError(f"raw source changed during refresh for topic: {topic_rel}")
 
     record_topic_run(
-        conn,  # type: ignore[arg-type]
+        conn,
         topic_path=topic_rel,
         run_id=run_id,
         timestamp=timestamp,
@@ -236,7 +239,9 @@ def _source_documents(paths: Sequence[Path], vault_root: Path) -> list[SourceDoc
     return docs
 
 
-def _recent_source_paths(current: Sequence[object], previous_hashes: dict[str, str]) -> set[str]:
+def _recent_source_paths(
+    current: Sequence[TopicRunSource], previous_hashes: Mapping[str, str]
+) -> set[str]:
     changed: set[str] = set()
     for src in current:
         relative_path = getattr(src, "relative_path")
@@ -246,12 +251,14 @@ def _recent_source_paths(current: Sequence[object], previous_hashes: dict[str, s
     return changed
 
 
-def _generated_matches_state(summary_path: Path, changelog_path: Path, state: object) -> bool:
+def _generated_matches_state(
+    summary_path: Path, changelog_path: Path, state: TopicRunState
+) -> bool:
     if not summary_path.exists() or not changelog_path.exists():
         return False
     return (
-        hash_bytes(summary_path.read_bytes()) == getattr(state, "summary_hash")
-        and hash_bytes(changelog_path.read_bytes()) == getattr(state, "changelog_hash")
+        hash_bytes(summary_path.read_bytes()) == state.summary_hash
+        and hash_bytes(changelog_path.read_bytes()) == state.changelog_hash
     )
 
 

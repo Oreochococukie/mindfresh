@@ -2,15 +2,15 @@
 
 [English](README.md) | 한국어
 
-리서치 지식 최신화 부담을 줄이기 위한 로컬 우선 Markdown 최신화/중복 제거 watcher입니다.
+빠르게 변하는 Markdown 지식베이스의 최신화 부담을 줄이는 로컬 우선 최신화/중복 제거 watcher입니다.
 
-`mindfresh`는 사용자가 명시적으로 등록하고 활성화한 vault만 감시합니다. 특정 주제 폴더에 새 Markdown 리서치 노트를 추가하면, 원본 노트는 건드리지 않고 해당 주제의 생성 파일인 `SUMMARY.md`와 `CHANGELOG.md`를 갱신합니다.
+`mindfresh`는 운영자가 명시적으로 등록하고 활성화한 vault만 감시합니다. 특정 주제 폴더에 새 Markdown 리서치 노트를 추가하면, 원본 노트는 건드리지 않고 해당 주제의 생성 파일인 `SUMMARY.md`와 `CHANGELOG.md`를 갱신합니다.
 
 > 상태: Phase 7 어댑터 연결과 관리 UX slice까지 구현되어 있습니다. 현재 빌드는 명시적 vault 레지스트리, deterministic fake adapter, 선택적 Google Gemini / MLX / Ollama adapter, 모델 preset, guided setup/config migration, API-key presence diagnostics, actionable `doctor` remediation, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, bounded `watch --once` flow를 포함합니다.
 
 ## 왜 만들었나
 
-Research 모델, 콘텐츠 생성 워크플로, 정책 정책, AI 툴링처럼 빠르게 바뀌는 주제는 매일 새 정보가 나옵니다. 일주일 전에 정리한 노트도 금방 낡을 수 있습니다. `mindfresh`는 모든 원본 노트를 다시 읽지 않아도 주제별 지식을 최신 상태로 유지하기 위해 설계되었습니다.
+AI 도구, 제품 정책, 기술 표준, 연구 워크플로처럼 빠르게 바뀌는 주제는 매일 새 정보가 나옵니다. 일주일 전에 정리한 노트도 금방 낡을 수 있습니다. `mindfresh`는 모든 원본 노트를 다시 읽지 않아도 주제별 지식을 최신 상태로 유지하기 위해 설계되었습니다.
 
 생성되는 `SUMMARY.md`는 짧은 요약문이 아닙니다. 한국어 최신 상태 문서이며 다음을 목표로 합니다.
 
@@ -45,10 +45,10 @@ vault/
 
 ## 빠른 시작 권장 경로
 
-현재 private repo 기준으로는 먼저 clone한 뒤 local installer를 실행합니다. installer는 `sudo`, shell profile 자동 수정, background daemon 없이 사용자 소유 경로인 `~/.mindfresh`에 설치합니다.
+현재 private repo 기준으로는 먼저 clone한 뒤 local installer를 실행합니다. installer는 `sudo`, shell profile 자동 수정, background daemon 없이 운영자 소유 경로인 `~/.mindfresh`에 설치합니다.
 
 ```bash
-git clone https://github.com/Oreochococukie/mindfresh.git
+git clone https://github.com/YOUR-ORG/mindfresh.git
 cd mindfresh
 ./install.sh
 export PATH="$HOME/.mindfresh/bin:$PATH"
@@ -60,14 +60,14 @@ export PATH="$HOME/.mindfresh/bin:$PATH"
 mindfresh onboard
 ```
 
-`onboard`는 정확한 vault 폴더 경로를 붙여넣으라고 요청합니다. `mindfresh`는 home, Desktop, Documents, Markdown note folder 폴더를 자동 검색하지 않습니다. API key 값도 Mindfresh에 직접 입력하지 않습니다.
+`onboard`는 정확한 vault 폴더 경로를 붙여넣으라고 요청합니다. `mindfresh`는 home, Desktop, Documents, 노트 폴더를 자동 검색하지 않습니다. API key 값도 Mindfresh에 직접 입력하지 않습니다.
 
 복붙 가능한 non-interactive onboarding도 지원합니다.
 
 ```bash
 mindfresh onboard \
   --vault-name research \
-  --vault-path ~/Documents/MindfreshDemoVault \
+  --vault-path ~/Documents/ResearchVault \
   --model-preset gemini-3-flash \
   --non-interactive
 ```
@@ -107,7 +107,7 @@ mindfresh watch --all-enabled --once
 repo 기여나 packaging 동작 디버깅 시 이 경로를 사용하세요.
 
 ```bash
-git clone https://github.com/Oreochococukie/mindfresh.git
+git clone https://github.com/YOUR-ORG/mindfresh.git
 cd mindfresh
 python3 -m venv .venv
 source .venv/bin/activate
@@ -135,7 +135,7 @@ mindfresh config export --output mindfresh-config.json
 mindfresh config import mindfresh-config.json
 ```
 
-export에는 API key 값이 포함되지 않습니다. import할 때 대상 Mac에 존재하지 않는 vault path는 disabled 상태로 들어오며, 사용자가 명시적으로 수정/재활성화해야 합니다.
+export에는 API key 값이 포함되지 않습니다. import할 때 대상 Mac에 존재하지 않는 vault path는 disabled 상태로 들어오며, 운영자가 명시적으로 수정/재활성화해야 합니다.
 
 ### 삭제
 
@@ -165,11 +165,11 @@ mindfresh doctor <vault-name>
 Vault 관리는 config 파일을 직접 편집하지 않아도 됩니다.
 
 ```bash
-mindfresh setup --vault-name research --vault-path ~/Documents/MindfreshDemoVault --model-preset gemini-3-flash
+mindfresh setup --vault-name research --vault-path ~/Documents/ResearchVault --model-preset gemini-3-flash
 mindfresh config show --json
 mindfresh config export --output mindfresh-config.json
 mindfresh config import mindfresh-config.json
-mindfresh vault add research ~/Documents/MindfreshDemoVault
+mindfresh vault add research ~/Documents/ResearchVault
 mindfresh vault model research gemini-3-flash
 mindfresh vault enable research
 mindfresh vault disable archive
@@ -204,7 +204,7 @@ mindfresh watch --all-enabled --once
 명시적 path를 한 번 watch하는 것도 가능하지만, path를 자동 등록하지는 않습니다.
 
 ```bash
-mindfresh watch ~/Documents/MindfreshDemoVault --once
+mindfresh watch ~/Documents/ResearchVault --once
 ```
 
 장기 실행 watcher daemon은 의도적으로 deferred 상태입니다. 현재 slice는 background scheduling을 추가하기 전에 refresh contract를 안전하게 테스트할 수 있도록 `--once`를 제공합니다.
@@ -238,6 +238,23 @@ mindfresh keys status
 ```
 
 `mindfresh keys status`는 presence/absence와 허용되는 변수명만 출력합니다. `mindfresh keys help`는 복붙 가능한 설정 명령을 출력합니다. 두 명령 모두 실제 API key 값은 출력하지 않습니다.
+
+현재 API key로 실제 접근 가능한 모델을 번호 메뉴로 확인하고 선택하려면 다음을 사용하세요.
+
+```bash
+# 목록만 보기
+mindfresh models google --non-interactive
+
+# 전체 기본 모델을 번호로 선택
+mindfresh models google --set-default
+
+# 등록된 vault 하나의 모델을 번호로 선택
+mindfresh models google --vault docs
+```
+
+Mindfresh는 Google model listing endpoint를 호출한 뒤 `generateContent`를 지원하는
+모델만 보여주고, 선택한 model id를 config에 저장합니다. 모델 이름을 직접 입력할
+필요가 없습니다.
 
 기본 preset 사용:
 
@@ -274,7 +291,7 @@ Built-in preset:
 로컬 모델이 MLX-compatible model path라면 vault에 model path를 등록합니다.
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault \
+mindfresh vault add research ~/Documents/ResearchVault \
   --adapter mlx \
   --model /path/to/your/gemma-4-31b-mlx-model
 
@@ -293,7 +310,7 @@ mindfresh refresh research
 모델이 Ollama에서 serve되고 있다면 Ollama model id를 사용합니다.
 
 ```bash
-mindfresh vault add research ~/Documents/MindfreshDemoVault \
+mindfresh vault add research ~/Documents/ResearchVault \
   --adapter ollama \
   --model your-gemma-4-31b-model-id
 

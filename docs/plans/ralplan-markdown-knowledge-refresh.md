@@ -2,9 +2,9 @@
 
 ## Status
 
-- Source spec: `.omx/specs/deep-interview-markdown-knowledge-refresh.md`
-- PRD: `.omx/plans/prd-markdown-knowledge-refresh.md`
-- Test spec: `.omx/plans/test-spec-markdown-knowledge-refresh.md`
+- Source spec: `docs/specs/deep-interview-markdown-knowledge-refresh.md`
+- PRD: `docs/plans/prd-markdown-knowledge-refresh.md`
+- Test spec: `docs/plans/test-spec-markdown-knowledge-refresh.md`
 - Mode: RALPLAN-DR short
 - Current verdict: revised after Architect APPROVE-with-refinements and Critic ITERATE feedback.
 
@@ -14,21 +14,21 @@
 
 1. Freshness-first.
 2. Raw source immutability.
-3. Low cognitive overhead.
+3. Low operational overhead.
 4. Local-first inference behind swappable adapter boundary.
 5. Deterministic, testable pipeline around probabilistic LLM output.
 
 ### Decision Drivers
 
 1. Direct-update safety and generated/source boundaries.
-2. Apple Silicon developer laptop practicality.
+2. Apple Silicon common developer desktops/laptops practicality.
 3. Testability without live model dependency.
 
 ### Options
 
 1. **Python CLI/daemon + MLX-first adapter + SQLite manifest — chosen.** Best fit for MLX Python API, fake adapter tests, and deterministic pipeline.
 2. **Node watcher + Ollama adapter.** Simpler HTTP/server path but weaker MLX-native control and service lifecycle dependency.
-3. **Markdown note folder plugin first.** Good UX but too much v1 scope before core pipeline is proven.
+3. **editor plugin first.** Good UX but too much v1 scope before core pipeline is proven.
 
 ## Final Architecture Decision
 
@@ -55,14 +55,14 @@ Use Python + deterministic manifest pipeline + swappable summarizer adapters. De
 
 - Freshness-first local Markdown updates.
 - Raw-source immutability with direct generated-file writes.
-- developer laptop local feasibility.
+- common developer desktops/laptops local feasibility.
 - CI/testability without model downloads.
 - Future model/runtime volatility.
 
 ### Alternatives considered
 
 - Node + Ollama-first: viable fallback, not selected due to less MLX-native control and service dependency.
-- Markdown note folder plugin first: deferred due to UI/plugin complexity.
+- editor plugin first: deferred due to UI/plugin complexity.
 - 31B default: rejected until benchmark proves quality gain justifies memory/latency cost.
 - Web/RSS ingestion: explicitly out of v1 scope.
 
@@ -72,7 +72,7 @@ The selected architecture maximizes trust in freshness mechanics before optimizi
 
 ### Consequences
 
-- v1 is CLI/watch based, not Markdown note folder-native.
+- v1 is CLI/watch based, not editor-native.
 - MLX model setup may need validation during execution.
 - Summary quality requires manual smoke tests in addition to deterministic CI.
 
@@ -80,7 +80,7 @@ The selected architecture maximizes trust in freshness mechanics before optimizi
 
 - Benchmark 26B A4B vs 31B vs fast profile.
 - Consider rollback/review mode if direct updates feel risky.
-- Consider Markdown note folder plugin after core pipeline stabilizes.
+- Consider editor plugin after core pipeline stabilizes.
 - Consider automatic web/source ingestion only after local-note freshness is proven.
 
 ## Implementation Plan
@@ -103,8 +103,8 @@ The selected architecture maximizes trust in freshness mechanics before optimizi
 - Model policy locked: Gemma 4 26B A4B default target, 31B benchmark-gated, smaller fast mode, Ollama fallback, llama.cpp deferred.
 - Verification strengthened with concrete scanner, manifest, changelog, multi-topic, watch, and crash-safe retry assertions.
 - Final critic improvements merged: freshness transition table, schema version/hash algorithm, explicit invalidation key, capability-detected Gemma profile, 31B benchmark gate, and crash-window tests.
-- User follow-up merged: multi-vault registry/allowlist so only explicitly selected vaults are watched; each vault keeps its own manifest.
-- User follow-up merged: distribution UX must not require hand-editing config; provide first-run wizard, vault manager commands, status/doctor, and later optional menubar/local UI.
+- Requirement merged: multi-vault registry/allowlist so only explicitly selected vaults are watched; each vault keeps its own manifest.
+- Requirement merged: distribution UX must not require hand-editing config; provide first-run wizard, vault manager commands, status/doctor, and later optional menubar/local UI.
 
 ## Available Agent Types Roster
 
@@ -121,7 +121,7 @@ The selected architecture maximizes trust in freshness mechanics before optimizi
 
 ## `$ralph` Follow-up Staffing Guidance
 
-Use `$ralph .omx/plans/ralplan-markdown-knowledge-refresh.md` for sequential execution.
+Use `$ralph docs/plans/ralplan-markdown-knowledge-refresh.md` for sequential execution.
 
 Suggested sequence:
 
@@ -136,7 +136,7 @@ Suggested reasoning: medium for implementation lanes, high for dependency/runtim
 
 ## `$team` Follow-up Staffing Guidance
 
-Use `$team .omx/plans/ralplan-markdown-knowledge-refresh.md` when parallel execution is desired.
+Use `$team docs/plans/ralplan-markdown-knowledge-refresh.md` when parallel execution is desired.
 
 Suggested lanes:
 
@@ -152,13 +152,13 @@ Suggested lanes:
 Launch hints:
 
 ```text
-$team .omx/plans/ralplan-markdown-knowledge-refresh.md
+$team docs/plans/ralplan-markdown-knowledge-refresh.md
 ```
 
 or CLI-style:
 
 ```bash
-omx team ".omx/plans/ralplan-markdown-knowledge-refresh.md"
+omx team "docs/plans/ralplan-markdown-knowledge-refresh.md"
 ```
 
 Team verification path:
