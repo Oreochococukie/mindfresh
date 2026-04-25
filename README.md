@@ -1,5 +1,7 @@
 # mindfresh
 
+[English](README.md) | [한국어](README.ko.md)
+
 Local-first Markdown freshness/dedupe watcher for reducing research knowledge freshness bottlenecks.
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
