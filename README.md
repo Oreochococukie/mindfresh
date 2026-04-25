@@ -41,25 +41,33 @@ Flow:
 5. Generated files are excluded from source ingestion to avoid self-ingestion loops.
 6. Raw notes remain byte-for-byte unchanged.
 
-## Quick start
+## Quick start (recommended)
 
-Clone and install from the repo. If the repo is private, make sure this GitHub
-account has access first:
+For the current private repo, clone once and run the local installer. It creates a
+user-owned install under `~/.mindfresh`, without `sudo`, shell-profile edits, or
+background daemons.
 
 ```bash
 git clone https://github.com/Oreochococukie/mindfresh.git
 cd mindfresh
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -e .
+./install.sh
+export PATH="$HOME/.mindfresh/bin:$PATH"
 ```
 
-Run deterministic setup without hand-editing TOML. The vault path is explicit:
-`mindfresh` never searches your home, Desktop, Documents, or Markdown note folder folders.
+Then start the beginner-friendly onboarding flow:
 
 ```bash
-mindfresh setup \
+mindfresh onboard
+```
+
+The onboarding command asks you to paste the exact vault folder path. `mindfresh`
+never searches your home, Desktop, Documents, or Markdown note folder folders. It also never
+asks you to type an API-key value into Mindfresh.
+
+Copy/paste non-interactive onboarding is also supported:
+
+```bash
+mindfresh onboard \
   --vault-name research \
   --vault-path ~/Documents/MindfreshDemoVault \
   --model-preset gemini-3-flash \
@@ -75,36 +83,54 @@ export GOOGLE_API_KEY="your-google-api-key"
 mindfresh keys status
 ```
 
-Check the non-secret config state:
+Verify the install and non-secret config state:
 
 ```bash
-mindfresh config show --json
+mindfresh --version
 mindfresh keys status
-mindfresh vault status research
+mindfresh models list
 mindfresh doctor research
 ```
 
-Refresh a registered vault:
-
-```bash
-mindfresh refresh research
-```
-
-Or run with the deterministic local test adapter:
+Run a safe deterministic smoke without a live model:
 
 ```bash
 mindfresh refresh research --adapter fake
-mindfresh watch --all-enabled --once --adapter fake
 ```
 
-Run one bounded live watch/refresh cycle across enabled vaults after your Google
-API key is set:
+Run one bounded live refresh/watch cycle after your API key is set:
 
 ```bash
+mindfresh refresh research
 mindfresh watch --all-enabled --once
 ```
 
-Move non-secret config to another Mac:
+### Manual developer install
+
+Use this path when contributing to the repo or debugging packaging behavior:
+
+```bash
+git clone https://github.com/Oreochococukie/mindfresh.git
+cd mindfresh
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+mindfresh onboard
+```
+
+### Update
+
+From an existing checkout:
+
+```bash
+cd mindfresh
+git pull
+./install.sh --prefix ~/.mindfresh --no-onboard
+mindfresh --version
+```
+
+### Move non-secret config to another Mac
 
 ```bash
 mindfresh config export --output mindfresh-config.json
@@ -115,6 +141,29 @@ mindfresh config import mindfresh-config.json
 Exports do not include API-key values. During import, vault paths that do not
 exist on the target Mac are imported as disabled and must be fixed/re-enabled
 explicitly.
+
+### Uninstall
+
+Remove the local app install prefix. This does not delete your vault notes.
+
+```bash
+rm -rf ~/.mindfresh
+```
+
+Optional cleanup if you want to remove Mindfresh config too:
+
+```bash
+rm -rf ~/.config/mindfresh
+```
+
+Troubleshooting quick checks:
+
+```bash
+~/.mindfresh/bin/mindfresh --version
+export PATH="$HOME/.mindfresh/bin:$PATH"
+mindfresh keys help
+mindfresh doctor <vault-name>
+```
 
 ## Vault management UX
 

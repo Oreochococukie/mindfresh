@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 import shlex
@@ -67,6 +68,13 @@ def callback(
         None,
         "--config",
         help="Config path. Overrides default and MINDFRESH_CONFIG_PATH for this command.",
+    ),
+    show_version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=lambda value: _version_callback(value),
+        is_eager=True,
+        help="Show the installed mindfresh version and exit.",
     ),
 ) -> None:
     ctx.obj = {"config_path": config.expanduser() if config else _default_config_file()}
@@ -209,6 +217,111 @@ def setup(
         typer.echo("No vault registered. Pass --vault-name and --vault-path to add one explicitly.")
     if non_interactive:
         typer.echo("Non-interactive mode: no prompts were shown and no vault paths were inferred.")
+
+
+@app.command()
+def onboard(
+    vault_name: Optional[str] = typer.Option(
+        None,
+        "--vault-name",
+        help="Explicit vault name to register.",
+    ),
+    vault_path: Optional[Path] = typer.Option(
+        None,
+        "--vault-path",
+        help="Explicit vault path to register. Mindfresh never auto-discovers vault paths.",
+    ),
+    model_preset: str = typer.Option(
+        DEFAULT_MODEL_PRESET,
+        "--model-preset",
+        "--preset",
+        help="Model preset to store for this vault and config default.",
+    ),
+    replace: bool = typer.Option(False, "--replace", help="Replace an existing vault record."),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Run without prompts. Requires --vault-name and --vault-path.",
+    ),
+    skip_doctor: bool = typer.Option(
+        False,
+        "--skip-doctor",
+        help="Do not run the final non-mutating diagnostics step.",
+    ),
+    strict_doctor: bool = typer.Option(
+        False,
+        "--strict-doctor",
+        help="Exit non-zero for any doctor failure, including a missing Google/Gemini API key.",
+    ),
+) -> None:
+    """Beginner-friendly onboarding over explicit setup, keys, models, and doctor."""
+    cfg_path = _config_path()
+    cfg = _load_or_exit(cfg_path)
+    _print_onboard_intro()
+
+    if non_interactive:
+        if vault_name is None or vault_path is None:
+            _fail("onboard --non-interactive requires --vault-name and --vault-path")
+    else:
+        if vault_name is None:
+            vault_name = typer.prompt("Vault name", default="docs")
+        if vault_path is None:
+            raw_path = typer.prompt(
+                "Paste the exact vault folder path (Mindfresh will not search for it)"
+            )
+            vault_path = Path(raw_path)
+        model_preset = typer.prompt("Model preset", default=model_preset or DEFAULT_MODEL_PRESET)
+
+    if vault_name is None or vault_path is None:
+        _fail("onboard requires an explicit vault name and vault path")
+
+    try:
+        selected_adapter, selected_model = _resolve_preset_adapter_model(
+            preset_name=model_preset,
+            adapter_override=None,
+            model_override=None,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    if selected_adapter is None:
+        _fail("onboard requires a model preset with an adapter")
+
+    cfg.default_adapter = selected_adapter
+    cfg.default_model = selected_model
+    cfg.model_profile = _profile_label(selected_adapter, selected_model)
+    try:
+        cfg = add_vault(
+            cfg,
+            name=vault_name,
+            path=str(vault_path),
+            adapter=selected_adapter,
+            model=selected_model,
+            enabled=True,
+            replace_existing=replace,
+        )
+    except ConfigError as exc:
+        _fail(str(exc))
+
+    written = _save_or_exit(cfg, cfg_path)
+    typer.echo(f"Onboarding config written: {written}")
+    typer.echo("Registered explicit vault: " + describe_vault(vault_name, cfg.vaults[vault_name]))
+    typer.echo(
+        f"Selected model preset: {model_preset} "
+        f"({selected_adapter}, {selected_model or '[no model]'})"
+    )
+    _print_onboard_key_guidance(vault_name)
+
+    if not skip_doctor:
+        _run_onboard_doctor(
+            cfg,
+            cfg_path,
+            vault_name=vault_name,
+            strict_doctor=strict_doctor,
+        )
+    else:
+        typer.echo(f"Diagnostics skipped. Later: mindfresh doctor {vault_name}")
+
+    _print_onboard_next_commands(vault_name)
 
 
 @vault_app.command("add")
@@ -644,6 +757,20 @@ def _default_config_file() -> Path:
     return Path(raw).expanduser() if raw else DEFAULT_CONFIG_FILE
 
 
+def _version_callback(value: Optional[bool]) -> None:
+    if not value:
+        return
+    typer.echo(f"mindfresh {_package_version()}")
+    raise typer.Exit()
+
+
+def _package_version() -> str:
+    try:
+        return version("mindfresh")
+    except PackageNotFoundError:
+        return "0.1.0-dev"
+
+
 def _config_path() -> Path:
     ctx = click.get_current_context(silent=True)
     if ctx is not None and isinstance(ctx.obj, dict) and ctx.obj.get("config_path") is not None:
@@ -677,6 +804,61 @@ def _print_doctor_summary(cfg: AppConfig, path: Path) -> None:
         typer.echo(f"PASS {item}")
     for item in failures:
         typer.echo(f"FAIL {item}")
+
+
+def _print_onboard_intro() -> None:
+    typer.echo("Mindfresh onboard")
+    typer.echo("- watches only vaults you explicitly register")
+    typer.echo("- leaves raw Markdown notes untouched")
+    typer.echo("- uses API keys from environment variables only")
+    typer.echo("- does not start a background watcher or run refresh automatically")
+
+
+def _print_onboard_key_guidance(vault_name: str) -> None:
+    typer.echo("API key setup (value is never typed into Mindfresh):")
+    typer.echo('  export GOOGLE_API_KEY="your-google-api-key"')
+    typer.echo("  # GEMINI_API_KEY is also accepted")
+    typer.echo("  mindfresh keys status")
+    typer.echo(f"  mindfresh doctor {vault_name}")
+
+
+def _run_onboard_doctor(
+    cfg: AppConfig,
+    cfg_path: Path,
+    *,
+    vault_name: str,
+    strict_doctor: bool,
+) -> None:
+    scoped = AppConfig(
+        default_adapter=cfg.default_adapter,
+        default_model=cfg.default_model,
+        model_profile=cfg.model_profile,
+    )
+    scoped.vaults[vault_name] = cfg.vaults[vault_name]
+    passes, failures = config_diagnostics(scoped, cfg_path, include_default_adapter=False)
+    typer.echo("Onboard diagnostics:")
+    for item in passes:
+        typer.echo(f"PASS {item}")
+    for item in failures:
+        typer.echo(f"FAIL {item}")
+    if not failures:
+        return
+    _print_diagnostic_next_steps(failures, passes=passes, target=vault_name)
+    if strict_doctor or not _only_missing_google_key_failures(failures):
+        raise typer.Exit(1)
+    typer.echo("Onboarding can continue: set the API key above when you are ready for live refresh.")
+
+
+def _only_missing_google_key_failures(failures: list[str]) -> bool:
+    return bool(failures) and all("google API key missing" in item for item in failures)
+
+
+def _print_onboard_next_commands(vault_name: str) -> None:
+    typer.echo("Next safe commands:")
+    typer.echo(f"  mindfresh refresh {vault_name} --adapter fake")
+    typer.echo(f"  mindfresh refresh {vault_name}")
+    typer.echo("  mindfresh watch --all-enabled --once")
+    typer.echo("Onboarding does not run refresh or watch automatically.")
 
 
 def _print_google_key_status() -> None:

@@ -14,7 +14,9 @@ Use `python3` in this repository because the worker/runtime environment does not
 
 The pytest suite is organized around the PRD/test-spec invariants:
 
-- `tests/test_config_ux.py` — first-run setup, non-secret config show/export/import, API-key presence diagnostics, actionable doctor remediation, model-preset recommendations, secret redaction, and vault lifecycle UX without hand-editing config.
+- `tests/test_config_ux.py` — first-run setup/onboarding, `--version`, non-secret config show/export/import, API-key presence diagnostics, actionable doctor remediation, model-preset recommendations, secret redaction, and vault lifecycle UX without hand-editing config.
+- `tests/test_onboarding_contract.py` — beginner `mindfresh onboard` and `--version` contracts: explicit vault-only setup, guided stdin, missing-path rejection, secret redaction, and no refresh/watch side effects.
+- `tests/test_installer.py` — `install.sh` dry-run and safety contracts: local prefix, documented safe flags, Git-ref validation, and no writes during dry-run/error exits.
 - `tests/test_scanner_boundaries.py` — generated/internal/hidden exclusions, generated-never-reingested behavior, and raw-note immutability for scanning.
 - `tests/test_refresh_integration_contract.py` — fake refresh, manifest, idempotence, single-topic refresh isolation, and crash/retry contracts.
 - `tests/test_watch_contract.py` — enabled-vault allowlist semantics and a bounded watch debounce contract.
@@ -70,6 +72,49 @@ Pass criteria:
 3. `keys status` reports presence/absence only and never prints actual API-key values.
 4. `config import` preserves existing paths, but imported missing paths are disabled with a warning.
 5. Fake refresh succeeds from the imported config.
+
+## Focused installer/onboarding smoke
+
+Use this when changing `install.sh`, `mindfresh onboard`, or install docs. This
+smoke keeps install files, config, cache, temp, and vault data inside a temporary
+directory.
+
+```bash
+tmpdir=$(mktemp -d)
+home="$tmpdir/home"
+tmp="$tmpdir/tmp"
+prefix="$tmpdir/prefix"
+config="$tmpdir/mindfresh.toml"
+vault="$tmpdir/vault"
+mkdir -p "$home" "$tmp" "$vault/research/topic-a"
+printf '# Topic A notes\n\nNew local generation note.\n' > "$vault/research/topic-a/source.md"
+
+HOME="$home" TMPDIR="$tmp" PIP_CACHE_DIR="$prefix/cache/pip" \
+  ./install.sh --dry-run --prefix "$prefix" --no-onboard
+test ! -e "$prefix/bin/mindfresh"
+
+HOME="$home" TMPDIR="$tmp" PIP_CACHE_DIR="$prefix/cache/pip" \
+  ./install.sh --prefix "$prefix" --no-onboard
+"$prefix/bin/mindfresh" --version
+"$prefix/bin/mindfresh" --config "$config" onboard \
+  --vault-name research \
+  --vault-path "$vault" \
+  --model-preset fake \
+  --non-interactive
+"$prefix/bin/mindfresh" --config "$config" keys status
+"$prefix/bin/mindfresh" --config "$config" models list
+"$prefix/bin/mindfresh" --config "$config" doctor research
+"$prefix/bin/mindfresh" --config "$config" refresh research --adapter fake
+```
+
+Pass criteria:
+
+1. Dry run writes no install files.
+2. Installer creates a direct executable at `$prefix/bin/mindfresh`.
+3. Installer does not require sudo, edit shell profiles, or start a daemon.
+4. Onboarding writes only the temp config and explicit temp vault path.
+5. Onboarding does not create `SUMMARY.md`/`CHANGELOG.md`; only the explicit final refresh does.
+6. API-key values are never printed.
 
 ## Focused key/model/doctor diagnostics smoke
 
