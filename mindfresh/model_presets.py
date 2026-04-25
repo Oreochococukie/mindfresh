@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -50,9 +50,26 @@ MODEL_PRESETS: Dict[str, ModelPreset] = {
     ),
 }
 
+MODEL_PRESET_RECOMMENDATIONS: Tuple[Tuple[str, str], ...] = (
+    ("another Mac / no local LLM", "gemini-3-flash"),
+    ("offline smaller local", "qwen3-14b-ollama or gemma3-12b-ollama"),
+    ("offline quality local", "gemma4-31b-ollama"),
+    ("tests/CI", "fake"),
+)
+
 
 def list_model_presets() -> Iterable[ModelPreset]:
     return [MODEL_PRESETS[name] for name in sorted(MODEL_PRESETS)]
+
+
+def model_preset_recommendations() -> Tuple[Tuple[str, str], ...]:
+    return MODEL_PRESET_RECOMMENDATIONS
+
+
+def model_preset_recommendations_text() -> str:
+    return "; ".join(
+        f"{context}: {preset}" for context, preset in MODEL_PRESET_RECOMMENDATIONS
+    )
 
 
 def get_model_preset(name: str) -> ModelPreset:
@@ -60,4 +77,8 @@ def get_model_preset(name: str) -> ModelPreset:
         return MODEL_PRESETS[name]
     except KeyError as exc:
         available = ", ".join(sorted(MODEL_PRESETS))
-        raise ValueError(f"unknown model preset: {name}; available: {available}") from exc
+        recommendations = model_preset_recommendations_text()
+        raise ValueError(
+            f"unknown model preset: {name}; available: {available}; "
+            f"recommended for this Mac: {recommendations}"
+        ) from exc

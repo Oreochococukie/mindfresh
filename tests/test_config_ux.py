@@ -60,6 +60,8 @@ def test_models_list_and_preset_vault_add(
     assert listing.exit_code == 0, listing.output
     assert "gemini-3-flash (default)" in listing.output
     assert "qwen3-14b-ollama" in listing.output
+    assert "Recommended for this Mac" in listing.output
+    assert "another Mac / no local LLM" in listing.output
 
     add = runner.invoke(
         cli_app,
@@ -169,6 +171,50 @@ def test_config_show_json_and_export_redact_secret_sentinel(
     assert sentinel not in export_stdout.output
 
 
+def test_keys_status_presence_only_redacts_secret(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_123"
+    monkeypatch.setenv("GOOGLE_API_KEY", sentinel)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = runner.invoke(cli_app, ["keys", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert "Google/Gemini API key: present" in result.output
+    assert "GOOGLE_API_KEY" in result.output
+    assert "GEMINI_API_KEY" in result.output
+    assert sentinel not in result.output
+
+
+def test_keys_status_missing_and_help_are_safe(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_123"
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", sentinel)
+
+    help_result = runner.invoke(cli_app, ["keys", "help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert 'export GOOGLE_API_KEY="your-google-api-key"' in help_result.output
+    assert "GEMINI_API_KEY" in help_result.output
+    assert sentinel not in help_result.output
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    missing = runner.invoke(cli_app, ["keys", "status"])
+    assert missing.exit_code == 0, missing.output
+    assert "Google/Gemini API key: missing" in missing.output
+    assert "Detected env vars: none" in missing.output
+    assert 'export GOOGLE_API_KEY="your-google-api-key"' in missing.output
+    assert sentinel not in missing.output
+
+
 def test_config_import_preserves_existing_paths_and_disables_missing_paths(
     runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app
 ) -> None:
@@ -268,6 +314,9 @@ def test_refresh_unknown_model_preset_reports_clean_cli_error(
 
     assert result.exit_code == 2
     assert "unknown model preset: missing" in result.output
+    assert "available:" in result.output
+    assert "recommended for this Mac" in result.output
+    assert "another Mac / no local LLM: gemini-3-flash" in result.output
     assert "Traceback" not in result.output
 
 
@@ -380,6 +429,153 @@ def test_doctor_registered_vault_uses_vault_model_not_missing_google_default(
     assert result.exit_code == 0, result.output
     assert "fake adapter available" in result.output
     assert "google API key missing" not in result.output
+
+
+def test_doctor_missing_google_key_prints_actionable_next_steps_without_secret(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_123"
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    add = runner.invoke(cli_app, ["vault", "add", "docs", str(vault_path)])
+    assert add.exit_code == 0, add.output
+
+    result = runner.invoke(cli_app, ["doctor", "docs"])
+
+    assert result.exit_code == 1, result.output
+    assert "FAIL vault docs: google API key missing" in result.output
+    assert "GOOGLE_API_KEY" in result.output
+    assert "GEMINI_API_KEY" in result.output
+    assert "mindfresh keys status" in result.output
+    assert 'export GOOGLE_API_KEY="your-google-api-key"' in result.output
+    assert "Traceback" not in result.output
+    assert sentinel not in result.output
+
+
+def test_doctor_ollama_missing_model_prints_pull_and_preset_guidance(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import adapters
+
+    class EmptyOllamaTagsResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"models":[]}'
+
+    monkeypatch.setattr(
+        adapters.request,
+        "urlopen",
+        lambda *args, **kwargs: EmptyOllamaTagsResponse(),
+    )
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    add = runner.invoke(
+        cli_app,
+        ["vault", "add", "docs", str(vault_path), "--model-preset", "qwen3-14b-ollama"],
+    )
+    assert add.exit_code == 0, add.output
+
+    result = runner.invoke(cli_app, ["doctor", "docs"])
+
+    assert result.exit_code == 1, result.output
+    assert "ollama /api/tags returned no installed models" in result.output
+    assert "ollama pull qwen3:14b" in result.output
+    assert "mindfresh vault model docs qwen3-14b-ollama" in result.output
+    assert "Recommended for this Mac" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_doctor_ollama_missing_configured_model_keeps_colon_model_id(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import adapters
+
+    class OtherOllamaTagsResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"models":[{"model":"gemma3:12b"}]}'
+
+    monkeypatch.setattr(
+        adapters.request,
+        "urlopen",
+        lambda *args, **kwargs: OtherOllamaTagsResponse(),
+    )
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    add = runner.invoke(
+        cli_app,
+        ["vault", "add", "docs", str(vault_path), "--model-preset", "qwen3-14b-ollama"],
+    )
+    assert add.exit_code == 0, add.output
+
+    result = runner.invoke(cli_app, ["doctor", "docs"])
+
+    assert result.exit_code == 1, result.output
+    assert "ollama pull qwen3:14b" in result.output
+    assert "ollama pull 14b" not in result.output
+    assert "Recommended for this Mac" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_doctor_mlx_command_and_model_path_failures_are_actionable(
+    runner: CliRunner,
+    isolated_config: Path,
+    tmp_path: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MINDFRESH_MLX_COMMAND", "mindfresh-definitely-missing-mlx")
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    missing_model = tmp_path / "missing-mlx-model"
+    add = runner.invoke(
+        cli_app,
+        [
+            "vault",
+            "add",
+            "docs",
+            str(vault_path),
+            "--adapter",
+            "mlx",
+            "--model",
+            str(missing_model),
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    result = runner.invoke(cli_app, ["doctor", "docs"])
+
+    assert result.exit_code == 1, result.output
+    assert "mlx command" in result.output
+    assert "MINDFRESH_MLX_COMMAND" in result.output
+    assert "mlx-lm" in result.output
+    assert "mlx model path does not exist" in result.output
+    assert "/path/to/mlx-model" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_refresh_adapter_override_does_not_inherit_google_model(

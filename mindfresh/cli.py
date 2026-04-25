@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 from pathlib import Path
 from typing import NoReturn, Optional
 
@@ -23,7 +25,19 @@ from .config import (
     write_config,
 )
 from .refresh import refresh_vault
-from .model_presets import DEFAULT_MODEL_PRESET, get_model_preset, list_model_presets
+from .adapters import (
+    DEFAULT_OLLAMA_HOST,
+    GOOGLE_API_HOST_ENV_VAR,
+    GOOGLE_API_KEY_ENV_VARS,
+    MLX_COMMAND_ENV_VAR,
+    OLLAMA_HOST_ENV_VAR,
+)
+from .model_presets import (
+    DEFAULT_MODEL_PRESET,
+    get_model_preset,
+    list_model_presets,
+    model_preset_recommendations,
+)
 from .vaults import (
     add_vault,
     enabled_vaults,
@@ -39,9 +53,11 @@ app = typer.Typer(help="mindfresh: local markdown freshness watcher", no_args_is
 vault_app = typer.Typer(help="Manage explicit vault registry", no_args_is_help=True)
 models_app = typer.Typer(help="List and select model presets", no_args_is_help=True)
 config_app = typer.Typer(help="Show, export, and import non-secret config", no_args_is_help=True)
+keys_app = typer.Typer(help="Check API-key setup without printing secrets", no_args_is_help=True)
 app.add_typer(vault_app, name="vault")
 app.add_typer(models_app, name="models")
 app.add_typer(config_app, name="config")
+app.add_typer(keys_app, name="keys")
 
 
 @app.callback()
@@ -440,6 +456,26 @@ def config_import(
         typer.secho(f"WARNING {warning}", fg=typer.colors.YELLOW)
 
 
+@keys_app.command("status")
+def keys_status() -> None:
+    """Report whether supported API-key environment variables are present."""
+    _print_google_key_status()
+
+
+@keys_app.command("help")
+def keys_help() -> None:
+    """Show safe API-key setup instructions without reading or printing secrets."""
+    typer.echo("Mindfresh API keys are configured with environment variables.")
+    typer.echo("Accepted Google/Gemini env vars: " + ", ".join(GOOGLE_API_KEY_ENV_VARS))
+    typer.echo('Example: export GOOGLE_API_KEY="your-google-api-key"')
+    typer.echo("# GEMINI_API_KEY is also accepted if you prefer that variable name.")
+    typer.echo(f"Optional API host override: export {GOOGLE_API_HOST_ENV_VAR}=<host>")
+    typer.echo("Verify without printing the key: mindfresh keys status")
+    typer.echo("Then run diagnostics: mindfresh doctor <vault-name>")
+    typer.echo("Config export/import never includes API-key values.")
+    typer.echo("Secret values are never printed by keys status/help or doctor.")
+
+
 @app.command()
 def status() -> None:
     """Show configured vaults, enablement, model profile, and watcher state."""
@@ -493,6 +529,7 @@ def doctor(
     for item in failures:
         typer.echo(f"FAIL {item}")
     if failures:
+        _print_diagnostic_next_steps(failures, passes=passes, target=target)
         raise typer.Exit(1)
 
 
@@ -642,6 +679,117 @@ def _print_doctor_summary(cfg: AppConfig, path: Path) -> None:
         typer.echo(f"FAIL {item}")
 
 
+def _print_google_key_status() -> None:
+    present = _present_env_vars(GOOGLE_API_KEY_ENV_VARS)
+    if present:
+        typer.echo("Google/Gemini API key: present")
+        typer.echo("Detected env vars: " + ", ".join(present))
+    else:
+        typer.echo("Google/Gemini API key: missing")
+        typer.echo("Detected env vars: none")
+    typer.echo("Accepted env vars: " + ", ".join(GOOGLE_API_KEY_ENV_VARS))
+    typer.echo("Secret values: never printed")
+    if not present:
+        typer.echo('Next: export GOOGLE_API_KEY="your-google-api-key"')
+        typer.echo("Next: mindfresh keys status")
+
+
+def _present_env_vars(names: tuple[str, ...]) -> list[str]:
+    return [name for name in names if os.environ.get(name, "").strip()]
+
+
+def _print_diagnostic_next_steps(
+    failures: list[str],
+    *,
+    passes: list[str],
+    target: Optional[str],
+) -> None:
+    lower_failures = [item.lower() for item in failures]
+    printed_recommendations = False
+
+    typer.echo("Next steps:")
+    if any("google api key missing" in item for item in lower_failures):
+        typer.echo(
+            "NEXT google-api-key: accepted env vars are "
+            + ", ".join(GOOGLE_API_KEY_ENV_VARS)
+        )
+        typer.echo('NEXT google-api-key: export GOOGLE_API_KEY="your-google-api-key"')
+        typer.echo("NEXT google-api-key: mindfresh keys status")
+        typer.echo(f"NEXT google-api-key: {_doctor_retry_command(target)}")
+
+    if any("ollama host is not reachable" in item for item in lower_failures):
+        typer.echo("NEXT ollama: start Ollama, then run `ollama list`.")
+        typer.echo(
+            f"NEXT ollama: or set {OLLAMA_HOST_ENV_VAR} to your Ollama host "
+            f"(default {DEFAULT_OLLAMA_HOST})."
+        )
+        typer.echo(f"NEXT ollama: {_doctor_retry_command(target)}")
+
+    if any(
+        ("ollama model" in item and "/api/tags" in item and "not" in item)
+        or "ollama /api/tags returned no installed models" in item
+        for item in lower_failures
+    ):
+        for model in _ollama_models_from_diagnostics(failures, passes) or ["<model-id>"]:
+            typer.echo(f"NEXT ollama: install the configured model: ollama pull {model}")
+        typer.echo(
+            "NEXT ollama: for a smaller local Mac, choose a smaller preset with "
+            f"`mindfresh vault model {_vault_target_or_placeholder(target)} qwen3-14b-ollama`."
+        )
+        printed_recommendations = _print_model_recommendations_once(printed_recommendations)
+
+    if any("mlx command" in item and "not" in item for item in lower_failures):
+        typer.echo("NEXT mlx: install mlx-lm or point Mindfresh at your MLX command.")
+        typer.echo(f'NEXT mlx: export {MLX_COMMAND_ENV_VAR}="python3 -m mlx_lm.generate"')
+        typer.echo(f"NEXT mlx: {_doctor_retry_command(target)}")
+
+    if any("mlx model path does not exist" in item for item in lower_failures):
+        typer.echo("NEXT mlx: set an existing local model path for this vault/run.")
+        typer.echo(
+            "NEXT mlx: example `mindfresh vault add <vault-name> <vault-path> "
+            "--adapter mlx --model /path/to/mlx-model`."
+        )
+        typer.echo(f"NEXT mlx: {_doctor_retry_command(target)}")
+
+    if any("adapter requires a model id/path" in item for item in lower_failures):
+        typer.echo("NEXT model: choose a model preset or pass an explicit --model.")
+        typer.echo("NEXT model: list presets with `mindfresh models list`.")
+        printed_recommendations = _print_model_recommendations_once(printed_recommendations)
+
+
+def _doctor_retry_command(target: Optional[str]) -> str:
+    if target:
+        return f"rerun diagnostics: mindfresh doctor {shlex.quote(target)}"
+    return "rerun diagnostics: mindfresh doctor"
+
+
+def _vault_target_or_placeholder(target: Optional[str]) -> str:
+    if target and not target.startswith(("/", ".", "~")) and "/" not in target:
+        return shlex.quote(target)
+    return "<vault-name>"
+
+
+def _ollama_models_from_diagnostics(failures: list[str], passes: list[str]) -> list[str]:
+    models: list[str] = []
+    for item in failures:
+        if "ollama model" in item and "/api/tags:" in item:
+            models.append(item.split("/api/tags:", 1)[1].strip())
+    for item in passes:
+        marker = "ollama adapter configured for model:"
+        if marker in item:
+            models.append(item.split(marker, 1)[1].strip())
+    return [model for index, model in enumerate(models) if model and model not in models[:index]]
+
+
+def _print_model_recommendations_once(already_printed: bool) -> bool:
+    if already_printed:
+        return True
+    typer.echo("Recommended for this Mac:")
+    for context, preset in model_preset_recommendations():
+        typer.echo(f"- {context}: {preset}")
+    return True
+
+
 def _disable_missing_imported_vaults(cfg: AppConfig) -> list[str]:
     warnings: list[str] = []
     for name in vault_names(cfg):
@@ -717,6 +865,7 @@ def _print_model_presets() -> None:
         typer.echo(
             f"{name}\t{preset.adapter}\t{preset.model or '[none]'}\t{preset.description}"
         )
+    _print_model_recommendations_once(False)
 
 
 def _fail(message: str) -> NoReturn:

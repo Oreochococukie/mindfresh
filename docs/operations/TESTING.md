@@ -14,7 +14,7 @@ Use `python3` in this repository because the worker/runtime environment does not
 
 The pytest suite is organized around the PRD/test-spec invariants:
 
-- `tests/test_config_ux.py` — first-run setup, non-secret config show/export/import, secret redaction, and vault lifecycle UX without hand-editing config.
+- `tests/test_config_ux.py` — first-run setup, non-secret config show/export/import, API-key presence diagnostics, actionable doctor remediation, model-preset recommendations, secret redaction, and vault lifecycle UX without hand-editing config.
 - `tests/test_scanner_boundaries.py` — generated/internal/hidden exclusions, generated-never-reingested behavior, and raw-note immutability for scanning.
 - `tests/test_refresh_integration_contract.py` — fake refresh, manifest, idempotence, single-topic refresh isolation, and crash/retry contracts.
 - `tests/test_watch_contract.py` — enabled-vault allowlist semantics and a bounded watch debounce contract.
@@ -57,6 +57,7 @@ python3 -m mindfresh --config "$config" setup \
   --model-preset fake \
   --non-interactive
 python3 -m mindfresh --config "$config" config show --json
+python3 -m mindfresh --config "$config" keys status
 python3 -m mindfresh --config "$config" config export --output "$export_file"
 python3 -m mindfresh --config "$tmpdir/imported.toml" config import "$export_file"
 python3 -m mindfresh --config "$tmpdir/imported.toml" refresh research
@@ -66,8 +67,38 @@ Pass criteria:
 
 1. `setup` registers only the explicit `--vault-path`.
 2. `config show --json` and `config export` are parseable and contain no API-key values.
-3. `config import` preserves existing paths, but imported missing paths are disabled with a warning.
-4. Fake refresh succeeds from the imported config.
+3. `keys status` reports presence/absence only and never prints actual API-key values.
+4. `config import` preserves existing paths, but imported missing paths are disabled with a warning.
+5. Fake refresh succeeds from the imported config.
+
+## Focused key/model/doctor diagnostics smoke
+
+Use this when changing API-key, model preset, or `doctor` remediation output:
+
+```bash
+tmpdir=$(mktemp -d)
+config="$tmpdir/mindfresh.toml"
+vault="$tmpdir/vault"
+mkdir -p "$vault"
+unset GOOGLE_API_KEY GEMINI_API_KEY
+
+python3 -m mindfresh --config "$config" setup \
+  --vault-name docs \
+  --vault-path "$vault" \
+  --model-preset gemini-3-flash \
+  --non-interactive
+python3 -m mindfresh --config "$config" keys status
+python3 -m mindfresh --config "$config" keys help
+python3 -m mindfresh --config "$config" models list
+python3 -m mindfresh --config "$config" doctor docs || true
+```
+
+Pass criteria:
+
+1. `keys status/help` mention `GOOGLE_API_KEY` and `GEMINI_API_KEY` but never print secret values.
+2. `models list` includes "Recommended for this Mac" guidance for cloud, smaller local, quality local, and fake presets.
+3. Missing Google/Gemini credentials in `doctor` produce actionable next steps: export command, `mindfresh keys status`, and retry command.
+4. `doctor` exits non-zero on failing diagnostics without a traceback.
 
 ## Manual fake-adapter smoke after refresh/watch integration
 

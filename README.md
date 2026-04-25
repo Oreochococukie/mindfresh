@@ -4,7 +4,7 @@ Local-first Markdown freshness/dedupe watcher for reducing research knowledge fr
 
 `mindfresh` watches only the vaults you explicitly register and enable. When you add a new Markdown research note to a topic folder, it refreshes that topic's generated `SUMMARY.md` and `CHANGELOG.md` while leaving your original notes untouched.
 
-> Status: Phase 7 adapter plumbing is implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional Google Gemini / MLX / Ollama adapters, model presets, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, and bounded `watch --once` flow.
+> Status: Phase 7 adapter plumbing plus management UX slices are implemented. The current build ships the explicit vault registry, deterministic fake adapter, optional Google Gemini / MLX / Ollama adapters, model presets, guided setup/config migration, API-key presence diagnostics, actionable `doctor` remediation, topic scanner, manifest/idempotence tracking, generated latest-state/changelog writer, and bounded `watch --once` flow.
 
 ## Why this exists
 
@@ -72,13 +72,16 @@ The default preset is `gemini-3-flash`, which uses the Google Gemini API model
 ```bash
 export GOOGLE_API_KEY="your-google-api-key"
 # GEMINI_API_KEY is also accepted.
+mindfresh keys status
 ```
 
 Check the non-secret config state:
 
 ```bash
 mindfresh config show --json
+mindfresh keys status
 mindfresh vault status research
+mindfresh doctor research
 ```
 
 Refresh a registered vault:
@@ -128,6 +131,8 @@ mindfresh vault enable research
 mindfresh vault disable archive
 mindfresh vault list
 mindfresh vault status research
+mindfresh keys status
+mindfresh keys help
 ```
 
 Model preset management:
@@ -137,6 +142,13 @@ mindfresh models list
 mindfresh models set-default gemini-3-flash
 mindfresh vault model research qwen3-14b-ollama
 ```
+
+`mindfresh models list` also prints "Recommended for this Mac" guidance:
+
+- another Mac / no local LLM → `gemini-3-flash` (default Gemini API path)
+- offline smaller local → `qwen3-14b-ollama` or `gemma3-12b-ollama`
+- offline quality local → `gemma4-31b-ollama`
+- tests/CI → `fake`
 
 Watching:
 
@@ -178,7 +190,12 @@ Set an API key:
 export GOOGLE_API_KEY="your-google-api-key"
 # or:
 export GEMINI_API_KEY="your-google-api-key"
+mindfresh keys status
 ```
+
+`mindfresh keys status` reports only presence/absence and accepted variable names.
+`mindfresh keys help` prints copy/paste-safe setup commands. Neither command prints
+the actual API-key value.
 
 Use the default preset:
 
@@ -266,12 +283,23 @@ mindfresh doctor research
 
 For Google, `doctor` checks that `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set. For Ollama, `doctor` checks `/api/tags` to confirm the configured model is installed. For MLX, it checks that the command is resolvable and local-looking model paths exist.
 
+When diagnostics fail, `doctor` prints actionable next steps instead of a
+traceback, for example:
+
+- Google/Gemini: accepted env var names, `export GOOGLE_API_KEY="your-google-api-key"`, `mindfresh keys status`, and the retry command.
+- Ollama: start Ollama or set `MINDFRESH_OLLAMA_HOST`, install the configured model with `ollama pull ...`, or switch to a smaller preset.
+- MLX: install/configure `mlx-lm`, set `MINDFRESH_MLX_COMMAND`, or point the vault/run at an existing local model path.
+
+`doctor` is presence-only for secrets: it may mention variable names, but it never
+prints API-key values.
+
 ## Safety guarantees
 
 - No automatic home/Desktop/Documents scanning.
 - No automatic web/RSS/GitHub/paper crawling in v1.
 - `setup` writes vaults only from explicit `--vault-path` input.
 - `config export` is non-secret; API keys stay per-machine.
+- `keys status`, `keys help`, and `doctor` never echo API-key values.
 - `config import` disables imported vaults whose paths are missing on the target Mac.
 - Only explicitly registered and enabled vaults are watched by `--all-enabled`.
 - Each vault has its own `.mindfresh/manifest.sqlite`.
