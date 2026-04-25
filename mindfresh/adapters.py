@@ -19,10 +19,13 @@ GOOGLE_API_KEY_ENV_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 GOOGLE_API_HOST_ENV_VAR = "MINDFRESH_GOOGLE_API_HOST"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_GOOGLE_API_HOST = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MAX_TOKENS = 4096
+MAX_OUTPUT_TOKENS_ENV_VAR = "MINDFRESH_MAX_OUTPUT_TOKENS"
+SOURCE_CHAR_LIMIT_ENV_VAR = "MINDFRESH_MAX_SOURCE_CHARS"
+DEFAULT_MAX_TOKENS = 16384
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_TIMEOUT_S = 600.0
-MAX_SOURCE_CHARS = 12000
+DEFAULT_SOURCE_CHAR_LIMIT = 0
+MAX_SOURCE_CHARS = DEFAULT_SOURCE_CHAR_LIMIT
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,48 @@ class SummarizerAdapter(Protocol):
 
 class AdapterRuntimeError(RuntimeError):
     """Raised when an optional live adapter cannot call its local runtime."""
+
+
+def _non_negative_int_from_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise AdapterRuntimeError(f"{name} must be an integer") from exc
+    if value < 0:
+        raise AdapterRuntimeError(f"{name} must be greater than or equal to 0")
+    return value
+
+
+def _positive_int_from_env(name: str, default: int) -> int:
+    value = _non_negative_int_from_env(name, default)
+    if value <= 0:
+        raise AdapterRuntimeError(f"{name} must be greater than 0")
+    return value
+
+
+def _default_max_tokens() -> int:
+    return _positive_int_from_env(MAX_OUTPUT_TOKENS_ENV_VAR, DEFAULT_MAX_TOKENS)
+
+
+def _source_char_limit() -> Optional[int]:
+    limit = _non_negative_int_from_env(SOURCE_CHAR_LIMIT_ENV_VAR, DEFAULT_SOURCE_CHAR_LIMIT)
+    return limit if limit > 0 else None
+
+
+def _limit_prompt_text(text: str, *, label: str) -> str:
+    limit = _source_char_limit()
+    if limit is None or len(text) <= limit:
+        return text
+    return (
+        text[:limit]
+        + "\n\n"
+        + "[입력 길이 제한: "
+        + f"{label} 원문이 {limit}자로 잘렸습니다. "
+        + f"전체 원문 보존이 필요하면 {SOURCE_CHAR_LIMIT_ENV_VAR}=0 또는 더 큰 값으로 설정하세요.]"
+    )
 
 
 class FakeSummarizerAdapter:
@@ -190,7 +235,7 @@ class LiveLLMSummarizerAdapter:
         *,
         model: str,
         runtime_label: str,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         temperature: float = DEFAULT_TEMPERATURE,
         timeout_s: float = DEFAULT_TIMEOUT_S,
     ) -> None:
@@ -198,7 +243,7 @@ class LiveLLMSummarizerAdapter:
             raise ValueError(f"{runtime_label} adapter requires --model or a vault model")
         self.model = model
         self.model_profile = f"{runtime_label}/{model}"
-        self.max_tokens = max_tokens
+        self.max_tokens = max_tokens if max_tokens is not None else _default_max_tokens()
         self.temperature = temperature
         self.timeout_s = timeout_s
 
@@ -753,27 +798,28 @@ def _build_live_prompt(
         _source_block(source, source.relative_path in recent_paths)
         for source in sources
     )
-    previous = (previous_summary or "").strip()
-    if len(previous) > MAX_SOURCE_CHARS:
-        previous = previous[:MAX_SOURCE_CHARS] + "\n...[truncated]"
+    previous = _limit_prompt_text((previous_summary or "").strip(), label="이전 생성 정리본")
     return f"""당신은 로컬 우선 Markdown 연구 신선도 엔진 mindfresh입니다.
 
 작업: 아래에 제공된 로컬 원본 노트만 사용해서 주제 단위 정리본을 최신화하고 중복을 제거하세요.
-중요: 이것은 요약 작업이 아닙니다. 원문의 날짜, 수치, 조건, 예외, 판단 근거, 비교 맥락을 가능한 한 보존하세요.
+중요: 이것은 요약 작업이 아닙니다. 모든 원본 파일의 원문 맥락을 최대한 유지하면서 중복·충돌·최신화 지점만 정리하세요.
 
 규칙:
 - 원본 노트가 뒷받침하지 않는 사실을 만들지 마세요.
 - 의미가 같은 중복 주장은 최신/가장 구체적인 표현 하나로 합치고, 합친 출처를 중복 제거 내역에 남기세요.
 - 낡았거나 충돌하는 주장은 조용히 지우지 말고 명시적으로 표시하세요.
 - 신선도를 우선하세요. 최근 변경 노트가 기존 정리본과 충돌하면 최근 노트가 변경점을 주도해야 합니다.
-- 추상적인 한 문단 요약으로 압축하지 마세요. 주제별 하위 항목과 원문 세부 맥락을 유지한 Markdown 정리본을 작성하세요.
+- 서로 겹치지 않는 섹션, 표, 날짜, 수치, 조건, 예외, 판단 근거, 비교 맥락은 병합하거나 압축하지 말고 원문 구조에 가깝게 유지하세요.
+- 원문에만 있는 세부 항목은 "덜 중요해 보인다"는 이유로 제거하지 마세요. 중복이 아닌 맥락은 보존 대상입니다.
+- 중복/충돌/최신화가 필요한 부분만 재정리하고, 나머지 비중복 원문 맥락은 가능한 한 상세히 유지하세요.
+- 입력에 "[입력 길이 제한:" 표시가 있으면 해당 원본은 불완전하다고 열린 질문 또는 충돌/낡음 항목에 남기세요.
 - 사람에게 보이는 모든 값은 반드시 한국어로 작성하세요.
 - 영어 섹션명이나 영어 문장으로 답하지 마세요.
 - 유효한 JSON 객체 하나만 반환하세요. Markdown 코드블록으로 감싸지 마세요.
 
 필수 JSON key:
 - freshness_state: one of "fresh", "changed", "stale-risk", "conflicts"
-- refreshed_context: 한국어 Markdown 문자열. 짧은 요약이 아니라 중복을 제거한 최신 기준 정리본.
+- refreshed_context: 한국어 Markdown 문자열. 짧은 요약이 아니라 원문 컨텍스트를 거의 보존한 최신 기준 정리본. 비중복 원문 맥락은 상세히 유지.
 - freshness_updates: 한국어 문자열 배열. 무엇이 최신화되었는지.
 - duplicate_groups: 한국어 문자열 배열. 어떤 중복을 하나로 합쳤는지.
 - preserved_context: 한국어 문자열 배열. 잘라내지 않고 보존한 중요한 원문 맥락.
@@ -793,9 +839,7 @@ def _build_live_prompt(
 
 
 def _source_block(source: SourceDocument, is_recent: bool) -> str:
-    content = source.content
-    if len(content) > MAX_SOURCE_CHARS:
-        content = content[:MAX_SOURCE_CHARS] + "\n...[truncated]"
+    content = _limit_prompt_text(source.content, label=f"`{source.relative_path}`")
     marker = "recent_or_changed" if is_recent else "existing"
     return (
         f"--- SOURCE {source.relative_path} ({marker}, sha256={source.sha256}) ---\n"
@@ -856,7 +900,7 @@ def _fallback_live_summary(raw: str, *, model_profile: str) -> SummaryResult:
     cleaned = raw.strip() or "라이브 모델이 빈 응답을 반환했습니다."
     return SummaryResult(
         freshness_state="changed",
-        refreshed_context=cleaned[:4000],
+        refreshed_context=cleaned,
         freshness_updates=[
             "라이브 모델 응답을 JSON으로 파싱하지 못해 원문 응답을 정리본 영역에 저장했습니다."
         ],

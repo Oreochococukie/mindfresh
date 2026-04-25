@@ -98,6 +98,26 @@ mindfresh onboard
 
 `onboard`는 정확한 vault 폴더 경로를 붙여넣으라고 요청합니다. `mindfresh`는 home, Desktop, Documents, 노트 폴더를 자동 검색하지 않습니다. API key 값도 Mindfresh에 직접 입력하지 않습니다.
 
+### 원문 컨텍스트 보존 설정
+
+Live adapter는 기본적으로 raw Markdown 원문 전체를 모델 입력에 보냅니다
+(`MINDFRESH_MAX_SOURCE_CHARS=0`). 모델 출력 예산도 짧은 요약으로 잘리지
+않도록 기본 `MINDFRESH_MAX_OUTPUT_TOKENS=16384`로 요청합니다. 의도는
+비중복 원문 맥락은 생성 정리본에 유지하고, 중복·낡음·충돌 claim만 접거나
+표시하는 것입니다.
+
+주제 폴더가 아주 길어서 생성된 `SUMMARY.md`가 짧게 잘리면 context/output
+window가 큰 모델을 쓰고 출력 예산을 올려서 실행하세요.
+
+```bash
+export MINDFRESH_MAX_SOURCE_CHARS=0
+export MINDFRESH_MAX_OUTPUT_TOKENS=32768
+mindfresh refresh demo
+```
+
+작은 로컬 모델을 쓰기 위해 파일별 입력 길이를 일부러 제한하려는 경우에만
+`MINDFRESH_MAX_SOURCE_CHARS`를 양수로 설정하세요.
+
 ### 개발자 수동 설치
 
 이 repo에 기여하거나 packaging 동작을 디버깅할 때 이 경로를 사용하세요.

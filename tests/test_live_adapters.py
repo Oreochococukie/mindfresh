@@ -13,6 +13,12 @@ from mindfresh import adapters, cli, config
 from mindfresh.adapters import SourceDocument, get_adapter
 
 
+@pytest.fixture(autouse=True)
+def _clear_live_limit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(adapters.MAX_OUTPUT_TOKENS_ENV_VAR, raising=False)
+    monkeypatch.delenv(adapters.SOURCE_CHAR_LIMIT_ENV_VAR, raising=False)
+
+
 class _FakeHTTPResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
@@ -127,6 +133,73 @@ def test_google_adapter_posts_generate_content_with_api_key(monkeypatch) -> None
     assert "refreshed_context" in payload["contents"][0]["parts"][0]["text"]
     assert result.model_profile == "google/gemini-3-flash-preview"
     assert result.refreshed_context == "Gemini API 정리본입니다."
+
+
+def test_google_adapter_uses_configurable_output_token_limit(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return _FakeHTTPResponse(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": _json_summary()}],
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv(adapters.MAX_OUTPUT_TOKENS_ENV_VAR, "32768")
+    monkeypatch.setattr(adapters.request, "urlopen", fake_urlopen)
+
+    adapter = get_adapter("google")
+    adapter.summarize(
+        topic="policy/compliance",
+        sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        recent_sources=[SourceDocument("note.md", "abc", "# Note\nFresh claim.")],
+        previous_summary=None,
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["generationConfig"]["maxOutputTokens"] == 32768
+
+
+def test_live_prompt_includes_full_sources_by_default() -> None:
+    long_tail = "끝까지 보존되어야 하는 원문 맥락"
+    long_content = "# 긴 원문\n\n" + ("중요한 세부 맥락입니다.\n" * 900) + long_tail
+
+    prompt = adapters._build_live_prompt(
+        topic="research/topic-a",
+        sources=[SourceDocument("long-note.md", "abc", long_content)],
+        recent_sources=[SourceDocument("long-note.md", "abc", long_content)],
+        previous_summary="이전 정리본",
+    )
+
+    assert long_tail in prompt
+    assert "`long-note.md` 원문이" not in prompt
+    assert "자로 잘렸습니다" not in prompt
+
+
+def test_live_prompt_respects_explicit_source_char_limit(monkeypatch) -> None:
+    long_tail = "제한 때문에 여기는 프롬프트에서 빠져야 합니다"
+    long_content = "# 긴 원문\n\n" + ("중요한 세부 맥락입니다.\n" * 20) + long_tail
+    monkeypatch.setenv(adapters.SOURCE_CHAR_LIMIT_ENV_VAR, "80")
+
+    prompt = adapters._build_live_prompt(
+        topic="research/topic-a",
+        sources=[SourceDocument("long-note.md", "abc", long_content)],
+        recent_sources=[SourceDocument("long-note.md", "abc", long_content)],
+        previous_summary="이전 정리본",
+    )
+
+    assert long_tail not in prompt
+    assert "[입력 길이 제한:" in prompt
+    assert adapters.SOURCE_CHAR_LIMIT_ENV_VAR in prompt
 
 
 def test_google_adapter_strips_api_key_env_value(monkeypatch) -> None:

@@ -106,6 +106,27 @@ The onboarding command asks you to paste the exact vault folder path. `mindfresh
 never searches your home, Desktop, Documents, or note folders. It also never
 asks you to type an API-key value into Mindfresh.
 
+### Context preservation controls
+
+Live adapters send complete raw Markdown source text by default
+(`MINDFRESH_MAX_SOURCE_CHARS=0`) and ask the model for a larger JSON response
+budget (`MINDFRESH_MAX_OUTPUT_TOKENS=16384`). This matches the product goal:
+non-overlapping source context should stay in the generated latest-state
+document, while only duplicated, stale, or conflicting claims are collapsed or
+marked.
+
+For very long topic folders, use a model with a large context/output window and
+raise the output budget if the generated `SUMMARY.md` is too short:
+
+```bash
+export MINDFRESH_MAX_SOURCE_CHARS=0
+export MINDFRESH_MAX_OUTPUT_TOKENS=32768
+mindfresh refresh demo
+```
+
+Only set `MINDFRESH_MAX_SOURCE_CHARS` to a positive number when you intentionally
+want to cap per-file prompt size for a smaller local model.
+
 ### Manual developer install
 
 Use this path when contributing to this repo or debugging packaging behavior:
