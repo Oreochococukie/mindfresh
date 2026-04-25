@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from mindfresh import config
 from mindfresh.adapters import GoogleModelInfo
+from mindfresh.validation import RuntimeValidationResult
 
 
 def _google_model(
@@ -198,6 +199,32 @@ def test_models_google_rejects_non_interactive_store_flags_before_api_call(
 
     assert result.exit_code == 2, result.output
     assert "Use --non-interactive without --set-default or --vault" in result.output
+
+
+def test_keys_validate_prints_invalid_without_secret_leak(
+    runner: CliRunner,
+    isolated_config: Path,
+    cli_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mindfresh import cli as cli_module
+
+    sentinel = "MF_SENTINEL_SECRET_SHOULD_NOT_LEAK_456"
+
+    def fake_validate_google_api_key(**_kwargs: object) -> RuntimeValidationResult:
+        return RuntimeValidationResult(
+            status="INVALID",
+            provider="google",
+            message="bad key [REDACTED]",
+        )
+
+    monkeypatch.setattr(cli_module, "validate_google_api_key", fake_validate_google_api_key)
+
+    result = runner.invoke(cli_app, ["keys", "validate", "--api-key", sentinel])
+
+    assert result.exit_code == 1, result.output
+    assert "INVALID google: bad key [REDACTED]" in result.output
+    assert sentinel not in result.output
 
 def test_setup_registers_only_explicit_vault_path(
     runner: CliRunner, isolated_config: Path, tmp_path: Path, cli_app

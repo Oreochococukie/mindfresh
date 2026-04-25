@@ -98,7 +98,11 @@ def run_demo(
     returns. The helper always verifies the raw sample notes are byte-for-byte
     unchanged by ``refresh_vault``.
     """
-    root = _default_demo_root() if vault_root is None else Path(vault_root).expanduser().resolve()
+    root = (
+        _default_demo_root().expanduser().resolve()
+        if vault_root is None
+        else Path(vault_root).expanduser().resolve()
+    )
     sample_paths = create_demo_vault(root)
     before_hashes = capture_source_hashes(sample_paths, vault_root=root)
 

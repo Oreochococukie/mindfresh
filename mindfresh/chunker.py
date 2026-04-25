@@ -81,14 +81,9 @@ def shard_chunks(chunks: Sequence[MarkdownChunk], *, max_chars: int) -> List[Con
     current_rendered: List[str] = []
     current_size = 0
 
-    for chunk in chunks:
+    for chunk in _chunks_that_fit_budget(chunks, max_chars=max_chars):
         rendered = render_chunk(chunk)
         rendered_size = len(rendered)
-        if rendered_size > max_chars:
-            raise ValueError(
-                f"chunk {chunk.source_path}#{chunk.ordinal} exceeds max_chars "
-                f"({rendered_size} > {max_chars})"
-            )
         separator_size = 2 if current_rendered else 0
         would_size = current_size + separator_size + rendered_size
 
@@ -124,6 +119,78 @@ def render_chunk(chunk: MarkdownChunk) -> str:
             chunk.content,
         ]
     )
+
+
+def _chunks_that_fit_budget(
+    chunks: Sequence[MarkdownChunk], *, max_chars: int
+) -> List[MarkdownChunk]:
+    fitted: List[MarkdownChunk] = []
+    for chunk in chunks:
+        if len(render_chunk(chunk)) <= max_chars:
+            fitted.append(chunk)
+            continue
+        fitted.extend(_split_oversized_chunk(chunk, max_chars=max_chars))
+    return fitted
+
+
+def _split_oversized_chunk(chunk: MarkdownChunk, *, max_chars: int) -> List[MarkdownChunk]:
+    """Split a too-large heading chunk without dropping source context."""
+
+    empty = _make_chunk(
+        source_path=chunk.source_path,
+        heading_path=chunk.heading_path,
+        ordinal=chunk.ordinal,
+        content="",
+    )
+    metadata_overhead = len(render_chunk(empty))
+    content_budget = max_chars - metadata_overhead - 64
+    if content_budget <= 0:
+        raise ValueError(
+            f"max_chars is too small to render chunk metadata for {chunk.source_path}#{chunk.ordinal}"
+        )
+
+    pieces = _split_text_preserving_order(chunk.content, max_chars=content_budget)
+    width = max(2, len(str(len(pieces))))
+    split_chunks: List[MarkdownChunk] = []
+    for index, piece in enumerate(pieces, start=1):
+        heading_path = (*chunk.heading_path, f"part {index:0{width}d}/{len(pieces):0{width}d}")
+        split_chunks.append(
+            _make_chunk(
+                source_path=chunk.source_path,
+                heading_path=heading_path,
+                ordinal=((chunk.ordinal + 1) * 1_000_000) + index,
+                content=piece,
+            )
+        )
+    return split_chunks
+
+
+def _split_text_preserving_order(text: str, *, max_chars: int) -> List[str]:
+    pieces: List[str] = []
+    current: List[str] = []
+    current_size = 0
+
+    for line in text.splitlines(keepends=True):
+        if len(line) > max_chars:
+            if current:
+                pieces.append("".join(current))
+                current = []
+                current_size = 0
+            for start in range(0, len(line), max_chars):
+                pieces.append(line[start : start + max_chars])
+            continue
+
+        if current and current_size + len(line) > max_chars:
+            pieces.append("".join(current))
+            current = []
+            current_size = 0
+
+        current.append(line)
+        current_size += len(line)
+
+    if current:
+        pieces.append("".join(current))
+    return [piece for piece in pieces if piece]
 
 
 def _make_chunk(

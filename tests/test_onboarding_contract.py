@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mindfresh import config
+from mindfresh.onboarding import load_onboarding_state, OnboardingStep
 
 
 @pytest.fixture()
@@ -223,6 +224,30 @@ def test_onboard_missing_google_key_is_advisory_by_default(
     assert "Onboarding can continue" in result.output
     assert "export GOOGLE_API_KEY" in result.output
     assert "docs" in config.load_config(isolated_config).vaults
+    state = load_onboarding_state(isolated_config.parent)
+    assert state.current_step == OnboardingStep.API_KEYS
+    assert state.last_failure is not None
+    assert state.last_failure.code == "api-key-pending"
+
+    resumed = runner.invoke(
+        cli_app,
+        [
+            "onboard",
+            "--resume",
+            "--vault-name",
+            "docs",
+            "--vault-path",
+            str(vault_path),
+            "--model-preset",
+            "gemini-3-flash",
+            "--non-interactive",
+            "--skip-doctor",
+            "--replace",
+        ],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    assert "Onboarding resume step: api_keys" in resumed.output
+    assert "api-key-pending" in resumed.output
 
 
 def _make_vault(tmp_path: Path) -> Path:

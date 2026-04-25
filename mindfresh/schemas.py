@@ -6,6 +6,7 @@ from typing import Iterable, Optional, Sequence
 PROMPT_SCHEMA_VERSION = "mindfresh-refresh-dedupe-v3-ko"
 SUMMARY_KIND = "summary"
 CHANGELOG_KIND = "changelog"
+CONTEXT_KIND = "context"
 CHANGELOG_TITLE = "# 최신화·중복제거 변경로그"
 
 SUMMARY_SECTIONS = (
@@ -91,6 +92,7 @@ def render_summary(
     timestamp: str,
     result: object,
     source_refs: Sequence[SourceRef],
+    context_refs: Sequence[str] = (),
 ) -> str:
     """Render SUMMARY.md as a Korean refresh/dedupe artifact.
 
@@ -103,6 +105,7 @@ def render_summary(
         "",
         "# 최신화·중복제거 정리본",
         "",
+        *_context_reference_section(context_refs),
         "## 최신 기준 정리본",
         str(getattr(result, "refreshed_context")),
         "",
@@ -149,6 +152,57 @@ def render_summary(
         "",
     ]
     return "\n".join(body)
+
+
+def render_context_shard(
+    *,
+    topic: str,
+    run_id: Optional[str],
+    timestamp: str,
+    part: object,
+    part_count: int,
+) -> str:
+    """Render one source-context preservation shard.
+
+    Context shards are intentionally not model summaries. They are generated
+    sidecars that keep raw Markdown chunks available when a topic folder is too
+    large for a single human-readable ``SUMMARY.md``.
+    """
+
+    ordinal = int(getattr(part, "ordinal")) + 1
+    content = str(getattr(part, "content"))
+    char_count = int(getattr(part, "char_count"))
+    sha256 = str(getattr(part, "sha256"))
+    return "\n".join(
+        [
+            render_frontmatter(CONTEXT_KIND, topic, run_id),
+            "",
+            f"# 보존 원문 파트 {ordinal:03d}/{part_count:03d}",
+            "",
+            "- 이 파일은 요약본이 아니라 원문 맥락 보존용 생성 파일입니다.",
+            "- 중복 제거·최신화 판단은 `SUMMARY.md`와 `CHANGELOG.md`를 확인하세요.",
+            f"- 갱신 시각: `{timestamp}`",
+            f"- 파트 해시: `{sha256[:12]}`",
+            f"- 문자 수: `{char_count}`",
+            "",
+            "## 원문 청크",
+            "",
+            content,
+            "",
+        ]
+    )
+
+
+def _context_reference_section(context_refs: Sequence[str]) -> list[str]:
+    if not context_refs:
+        return []
+    return [
+        "## 보존 원문 파트",
+        "",
+        "아래 파일들은 큰 주제 폴더의 비중복 원문 맥락을 요약하지 않고 보존하기 위한 생성 파일입니다.",
+        _bullet(context_refs, "생성된 보존 원문 파트가 없습니다."),
+        "",
+    ]
 
 
 def render_changelog_entry(entry: ChangelogEntry) -> str:

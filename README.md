@@ -56,29 +56,28 @@ cd mindfresh
 export PATH="$HOME/.mindfresh/bin:$PATH"
 ```
 
-Run a copy/paste smoke test with a demo vault. This path does not need an API
-key and proves the command, config, scanner, and generated files work:
+Open the expanded help first, then run the built-in neutral smoke test. The
+demo path does not need an API key and does not touch your real vaults:
 
 ```bash
-mkdir -p ~/Documents/MindfreshDemoVault/research/topic-a
-cat > ~/Documents/MindfreshDemoVault/research/topic-a/first-note.md <<'EOF'
-# First note
+mindfresh --help
+mindfresh demo --dry-run
+```
 
-Mindfresh should preserve this source note and generate latest-state files next to it.
-EOF
+Register an explicit vault only when the command path is verified:
 
+```bash
 mindfresh onboard \
-  --vault-name demo \
-  --vault-path ~/Documents/MindfreshDemoVault \
+  --vault-name research \
+  --vault-path ~/Documents/ResearchVault \
   --model-preset gemini-3-flash \
   --non-interactive \
   --skip-doctor
 
 mindfresh --version
 mindfresh models list
-mindfresh vault status demo
-mindfresh refresh demo --adapter fake
-cat ~/Documents/MindfreshDemoVault/research/topic-a/SUMMARY.md
+mindfresh vault status research
+mindfresh refresh research --adapter fake --dry-run
 ```
 
 The default preset is `gemini-3-flash`, which uses the Google Gemini API model
@@ -90,9 +89,10 @@ refresh:
 export GOOGLE_API_KEY="your-google-api-key"
 # GEMINI_API_KEY is also accepted.
 mindfresh keys status
-mindfresh models google --vault demo
-mindfresh doctor demo
-mindfresh refresh demo
+mindfresh keys validate --prompt
+mindfresh models google --vault research
+mindfresh doctor research
+mindfresh refresh research
 mindfresh watch --all-enabled --once
 ```
 
@@ -100,6 +100,10 @@ To connect your real vault instead of the demo vault, run:
 
 ```bash
 mindfresh onboard
+# if a key/model check fails, fix it and continue from the failed step:
+mindfresh onboard --resume
+# or start the guided flow over:
+mindfresh onboard --restart
 ```
 
 The onboarding command asks you to paste the exact vault folder path. `mindfresh`
@@ -126,6 +130,17 @@ mindfresh refresh demo
 
 Only set `MINDFRESH_MAX_SOURCE_CHARS` to a positive number when you intentionally
 want to cap per-file prompt size for a smaller local model.
+
+Large topic folders also get source-context sidecars. In the default
+`--preserve-mode auto`, Mindfresh writes `_generated/mindfresh/CONTEXT-*.md`
+when a topic has many sources or enough raw text that one generated file would
+be hard to use. These files are not summaries; they preserve ordered Markdown
+chunks with source paths and hashes so non-overlapping context is not lost.
+
+```bash
+mindfresh refresh research --preserve-mode auto
+mindfresh refresh research --preserve-mode sharded --context-shard-max-chars 40000
+```
 
 ### Manual developer install
 

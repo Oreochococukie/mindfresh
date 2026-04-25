@@ -25,6 +25,14 @@ from .config import (
     resolve_watch_targets,
     write_config,
 )
+from .demo import run_demo
+from .onboarding import (
+    OnboardingStep,
+    load_onboarding_state,
+    mark_step_completed,
+    record_onboarding_failure,
+    restart_onboarding,
+)
 from .refresh import refresh_vault
 from .adapters import (
     DEFAULT_OLLAMA_HOST,
@@ -51,9 +59,27 @@ from .vaults import (
     set_vault_enabled,
     vault_names,
 )
+from .validation import validate_google_api_key, validate_ollama_runtime
 from .watch import watch_once
 
-app = typer.Typer(help="mindfresh: local markdown freshness watcher", no_args_is_help=True)
+APP_HELP = """mindfresh: local Markdown freshness and dedupe watcher.
+
+Quick start:
+  1. Run `mindfresh onboard` for guided setup/resume.
+  2. Run `mindfresh demo --dry-run` to verify the command path with neutral sample notes.
+  3. Run `mindfresh keys validate --prompt` or `mindfresh doctor <vault>` to check Gemini/Ollama setup.
+  4. Run `mindfresh refresh <vault> --dry-run` before writing generated files.
+  5. Run `mindfresh watch --all-enabled --once` for one safe enabled-vault cycle.
+
+Safety defaults:
+  - only explicitly registered/enabled vaults are watched;
+  - raw Markdown notes are never edited;
+  - generated files are excluded from future source ingestion;
+  - API key values are never printed or stored by Mindfresh.
+"""
+
+
+app = typer.Typer(help=APP_HELP, no_args_is_help=True)
 vault_app = typer.Typer(help="Manage explicit vault registry", no_args_is_help=True)
 models_app = typer.Typer(help="List and select model presets", no_args_is_help=True)
 config_app = typer.Typer(help="Show, export, and import non-secret config", no_args_is_help=True)
@@ -81,6 +107,39 @@ def callback(
     ),
 ) -> None:
     ctx.obj = {"config_path": config.expanduser() if config else _default_config_file()}
+
+
+@app.command()
+def demo(
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--write",
+        help="Dry-run by default. Use --write only inside the temporary demo vault.",
+    ),
+    vault_root: Optional[Path] = typer.Option(
+        None,
+        "--vault-root",
+        help="Optional demo vault location. Defaults to a new temporary directory.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print parseable demo metadata."),
+) -> None:
+    """Run a neutral fake-adapter smoke test without touching your real vaults."""
+    report = run_demo(vault_root=vault_root, dry_run=dry_run, force=True)
+    if json_output:
+        typer.echo(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    typer.echo("Mindfresh demo smoke test")
+    typer.echo(f"Demo vault: {report.vault_root}")
+    typer.echo(f"Mode: {'dry-run (no generated files written)' if report.dry_run else 'write'}")
+    for result in report.results:
+        typer.echo(f"- {result.topic}: {result.status}")
+    for note in report.sample_notes:
+        status = "unchanged" if note.sha256_before == note.sha256_after else "changed"
+        typer.echo(f"PASS raw note {status}: {note.path}")
+    for artifact in report.generated_artifacts:
+        written = "exists" if artifact.exists else "not written"
+        typer.echo(f"- {artifact.kind}: {artifact.path} ({written})")
 
 
 @app.command()
@@ -256,14 +315,39 @@ def onboard(
         "--strict-doctor",
         help="Exit non-zero for any doctor failure, including a missing Google/Gemini API key.",
     ),
+    resume: bool = typer.Option(False, "--resume", help="Show saved onboarding state and continue."),
+    restart: bool = typer.Option(
+        False,
+        "--restart",
+        help="Clear saved onboarding progress and start from the first step.",
+    ),
+    skip_demo: bool = typer.Option(
+        False,
+        "--skip-demo",
+        help="Skip the initial neutral dry-run smoke check.",
+    ),
 ) -> None:
     """Beginner-friendly onboarding over explicit setup, keys, models, and doctor."""
     cfg_path = _config_path()
+    state_dir = cfg_path.parent
     cfg = _load_or_exit(cfg_path)
+    if restart:
+        restart_onboarding(state_dir)
+        typer.echo("Onboarding state restarted from the beginning.")
+    elif resume:
+        _print_onboarding_state(load_onboarding_state(state_dir))
     _print_onboard_intro()
+    if not skip_demo:
+        _run_onboard_demo_smoke(state_dir)
 
     if non_interactive:
         if vault_name is None or vault_path is None:
+            record_onboarding_failure(
+                state_dir,
+                step=OnboardingStep.VAULT,
+                code="missing-vault",
+                message="onboard --non-interactive requires --vault-name and --vault-path",
+            )
             _fail("onboard --non-interactive requires --vault-name and --vault-path")
     else:
         if vault_name is None:
@@ -276,6 +360,12 @@ def onboard(
         model_preset = typer.prompt("Model preset", default=model_preset or DEFAULT_MODEL_PRESET)
 
     if vault_name is None or vault_path is None:
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.VAULT,
+            code="missing-vault",
+            message="onboard requires an explicit vault name and vault path",
+        )
         _fail("onboard requires an explicit vault name and vault path")
 
     try:
@@ -285,10 +375,23 @@ def onboard(
             model_override=None,
         )
     except ValueError as exc:
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.MODEL,
+            code="invalid-model-preset",
+            message=str(exc),
+        )
         _fail(str(exc))
     if selected_adapter is None:
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.MODEL,
+            code="missing-adapter",
+            message="onboard requires a model preset with an adapter",
+        )
         _fail("onboard requires a model preset with an adapter")
 
+    mark_step_completed(state_dir, OnboardingStep.MODEL, next_step=OnboardingStep.VAULT)
     cfg.default_adapter = selected_adapter
     cfg.default_model = selected_model
     cfg.model_profile = _profile_label(selected_adapter, selected_model)
@@ -303,9 +406,16 @@ def onboard(
             replace_existing=replace,
         )
     except ConfigError as exc:
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.VAULT,
+            code="vault-config-error",
+            message=str(exc),
+        )
         _fail(str(exc))
 
     written = _save_or_exit(cfg, cfg_path)
+    mark_step_completed(state_dir, OnboardingStep.VAULT, next_step=OnboardingStep.API_KEYS)
     typer.echo(f"Onboarding config written: {written}")
     typer.echo("Registered explicit vault: " + describe_vault(vault_name, cfg.vaults[vault_name]))
     typer.echo(
@@ -314,16 +424,20 @@ def onboard(
     )
     _print_onboard_key_guidance(vault_name)
 
+    doctor_complete = True
     if not skip_doctor:
-        _run_onboard_doctor(
+        doctor_complete = _run_onboard_doctor(
             cfg,
             cfg_path,
             vault_name=vault_name,
             strict_doctor=strict_doctor,
+            state_dir=state_dir,
         )
     else:
         typer.echo(f"Diagnostics skipped. Later: mindfresh doctor {vault_name}")
 
+    if doctor_complete:
+        mark_step_completed(state_dir, OnboardingStep.COMPLETE, next_step=OnboardingStep.COMPLETE)
     _print_onboard_next_commands(vault_name)
 
 
@@ -658,12 +772,62 @@ def keys_help() -> None:
     typer.echo("# GEMINI_API_KEY is also accepted if you prefer that variable name.")
     typer.echo(f"Optional API host override: export {GOOGLE_API_HOST_ENV_VAR}=<host>")
     typer.echo("Verify without printing the key: mindfresh keys status")
+    typer.echo("Validate the key without storing it: mindfresh keys validate --prompt")
     typer.echo("List selectable models for this key: mindfresh models google --non-interactive")
     typer.echo("Choose a default model from the live list: mindfresh models google --set-default")
     typer.echo("Choose a vault model from the live list: mindfresh models google --vault <vault-name>")
     typer.echo("Then run diagnostics: mindfresh doctor <vault-name>")
     typer.echo("Config export/import never includes API-key values.")
     typer.echo("Secret values are never printed by keys status/help or doctor.")
+
+
+@keys_app.command("validate")
+def keys_validate(
+    provider: str = typer.Option(
+        "google",
+        "--provider",
+        help="Runtime to validate: google or ollama.",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        help="Optional Google/Gemini API key value to validate once. Never stored.",
+    ),
+    prompt_for_key: bool = typer.Option(
+        False,
+        "--prompt",
+        help="Prompt for a Google/Gemini API key with hidden input, then validate it once.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Ollama model to validate when --provider ollama is used.",
+    ),
+    host: Optional[str] = typer.Option(
+        None,
+        "--host",
+        help="Optional Google API host or Ollama host override for this validation only.",
+    ),
+) -> None:
+    """Validate API/runtime credentials and print PASS or INVALID without leaking secrets."""
+    normalized = provider.strip().lower()
+    if normalized in {"google", "gemini"}:
+        key = api_key
+        if prompt_for_key and not key:
+            key = typer.prompt("Paste Google/Gemini API key", hide_input=True)
+        result = validate_google_api_key(api_key=key, host=host)
+    elif normalized == "ollama":
+        if not model:
+            _fail("keys validate --provider ollama requires --model <model-id>")
+        result = validate_ollama_runtime(model=model, host=host)
+    else:
+        _fail("keys validate --provider must be google or ollama")
+
+    typer.echo(f"{result.status} {result.provider}: {result.message}")
+    for detail in result.details:
+        typer.echo(f"- {detail}")
+    if not result.ok:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -737,6 +901,16 @@ def refresh(
         help="Use a named model preset for this run.",
     ),
     force: bool = typer.Option(False),
+    preserve_mode: str = typer.Option(
+        "auto",
+        "--preserve-mode",
+        help="Context preservation mode: auto, single, or sharded.",
+    ),
+    context_shard_max_chars: Optional[int] = typer.Option(
+        None,
+        "--context-shard-max-chars",
+        help="Maximum characters per _generated/mindfresh/CONTEXT-*.md shard.",
+    ),
 ) -> None:
     """Refresh generated latest/dedupe artifacts with a local adapter."""
     cfg = _load_or_exit(_config_path())
@@ -760,6 +934,8 @@ def refresh(
             adapter_model=adapter_model,
             dry_run=dry_run,
             force=force,
+            preserve_mode=preserve_mode,
+            context_shard_max_chars=context_shard_max_chars,
         )
     except Exception as exc:  # CLI boundary: show clean error instead of traceback.
         _fail(str(exc))
@@ -770,6 +946,8 @@ def refresh(
         run = f" run={result.run_id}" if result.run_id else ""
         triggers = ", ".join(result.trigger_files) if result.trigger_files else "no changed sources"
         typer.echo(f"{result.topic}: {result.status}{run} [{triggers}]")
+        if result.context_hashes:
+            typer.echo(f"  context shards: {len(result.context_hashes)}")
 
 
 @app.command()
@@ -891,11 +1069,44 @@ def _print_onboard_intro() -> None:
     typer.echo("- does not start a background watcher or run refresh automatically")
 
 
+def _print_onboarding_state(state: object) -> None:
+    current_step = getattr(state, "current_step", None)
+    step_value = getattr(current_step, "value", str(current_step))
+    typer.echo(f"Onboarding resume step: {step_value}")
+    failure = getattr(state, "last_failure", None)
+    if failure is not None:
+        failure_step = getattr(getattr(failure, "step", None), "value", "unknown")
+        typer.echo(
+            "Last onboarding issue: "
+            f"{failure_step}/{getattr(failure, 'code', 'unknown')} — "
+            f"{getattr(failure, 'message', '')}"
+        )
+
+
+def _run_onboard_demo_smoke(state_dir: Path) -> None:
+    try:
+        report = run_demo(dry_run=True, force=True)
+    except Exception as exc:
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.START,
+            code="demo-dry-run-failed",
+            message=str(exc),
+        )
+        _fail(f"onboard demo dry-run failed: {exc}")
+    mark_step_completed(state_dir, OnboardingStep.START, next_step=OnboardingStep.VAULT)
+    typer.echo(
+        "PASS demo dry-run: command path verified with neutral sample notes "
+        f"({len(report.sample_notes)} raw notes unchanged)"
+    )
+
+
 def _print_onboard_key_guidance(vault_name: str) -> None:
     typer.echo("API key setup (value is never typed into Mindfresh):")
     typer.echo('  export GOOGLE_API_KEY="your-google-api-key"')
     typer.echo("  # GEMINI_API_KEY is also accepted")
     typer.echo("  mindfresh keys status")
+    typer.echo("  mindfresh keys validate --prompt")
     typer.echo(f"  mindfresh models google --vault {shlex.quote(vault_name)}")
     typer.echo(f"  mindfresh doctor {vault_name}")
 
@@ -906,7 +1117,8 @@ def _run_onboard_doctor(
     *,
     vault_name: str,
     strict_doctor: bool,
-) -> None:
+    state_dir: Path,
+) -> bool:
     scoped = AppConfig(
         default_adapter=cfg.default_adapter,
         default_model=cfg.default_model,
@@ -920,11 +1132,25 @@ def _run_onboard_doctor(
     for item in failures:
         typer.echo(f"FAIL {item}")
     if not failures:
-        return
+        mark_step_completed(state_dir, OnboardingStep.DOCTOR, next_step=OnboardingStep.COMPLETE)
+        return True
     _print_diagnostic_next_steps(failures, passes=passes, target=vault_name)
     if strict_doctor or not _only_missing_google_key_failures(failures):
+        record_onboarding_failure(
+            state_dir,
+            step=OnboardingStep.DOCTOR,
+            code="doctor-failed",
+            message="; ".join(failures),
+        )
         raise typer.Exit(1)
+    record_onboarding_failure(
+        state_dir,
+        step=OnboardingStep.API_KEYS,
+        code="api-key-pending",
+        message="; ".join(failures),
+    )
     typer.echo("Onboarding can continue: set the API key above when you are ready for live refresh.")
+    return False
 
 
 def _only_missing_google_key_failures(failures: list[str]) -> bool:

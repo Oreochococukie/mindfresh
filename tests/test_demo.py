@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+from mindfresh import cli
 from mindfresh.demo import create_demo_vault, run_demo
 from mindfresh.scanner import hash_file
 
@@ -55,3 +58,16 @@ def test_create_demo_vault_uses_neutral_sample_markdown(tmp_path: Path) -> None:
     combined = "\n".join(path.read_text(encoding="utf-8").lower() for path in sample_paths)
     for banned_term in BANNED_SAMPLE_TERMS:
         assert banned_term not in combined
+
+
+def test_cli_demo_dry_run_is_copy_paste_safe(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli.app,
+        ["demo", "--dry-run", "--vault-root", str(tmp_path / "demo-vault")],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Mindfresh demo smoke test" in result.output
+    assert "dry-run" in result.output
+    assert "PASS raw note unchanged" in result.output
+    assert not any((tmp_path / "demo-vault").rglob("SUMMARY.md"))
