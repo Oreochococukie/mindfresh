@@ -45,16 +45,52 @@ vault/
 
 ## 빠른 시작 권장 경로
 
-현재 private repo 기준으로는 먼저 clone한 뒤 local installer를 실행합니다. installer는 `sudo`, shell profile 자동 수정, background daemon 없이 운영자 소유 경로인 `~/.mindfresh`에 설치합니다.
+이 repo를 clone한 뒤 local installer를 실행합니다. installer는 `sudo`, shell profile 자동 수정, background daemon 없이 운영자 소유 경로인 `~/.mindfresh`에 설치합니다. 아래 명령은 이 repo에서 그대로 복붙 가능하도록 실제 URL을 사용합니다.
 
 ```bash
-git clone https://github.com/YOUR-ORG/mindfresh.git
+git clone https://github.com/Oreochococukie/mindfresh.git
 cd mindfresh
 ./install.sh
 export PATH="$HOME/.mindfresh/bin:$PATH"
 ```
 
-그다음 beginner-friendly onboarding을 실행합니다.
+복붙 가능한 demo vault smoke test를 먼저 실행합니다. 이 경로는 API key가 없어도 되며 command, config, scanner, generated files가 실제로 동작하는지 확인합니다.
+
+```bash
+mkdir -p ~/Documents/MindfreshDemoVault/research/topic-a
+cat > ~/Documents/MindfreshDemoVault/research/topic-a/first-note.md <<'EOF'
+# First note
+
+Mindfresh should preserve this source note and generate latest-state files next to it.
+EOF
+
+mindfresh onboard \
+  --vault-name demo \
+  --vault-path ~/Documents/MindfreshDemoVault \
+  --model-preset gemini-3-flash \
+  --non-interactive \
+  --skip-doctor
+
+mindfresh --version
+mindfresh models list
+mindfresh vault status demo
+mindfresh refresh demo --adapter fake
+cat ~/Documents/MindfreshDemoVault/research/topic-a/SUMMARY.md
+```
+
+기본 preset은 `gemini-3-flash`이며 Google Gemini API 모델 `gemini-3-flash-preview`를 사용합니다. 실제 Gemini 사용 시에는 API key 환경변수 하나를 설정하고, 그 key로 접근 가능한 모델을 번호로 고른 뒤 diagnostics/refresh를 실행합니다.
+
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+# GEMINI_API_KEY도 사용할 수 있습니다.
+mindfresh keys status
+mindfresh models google --vault demo
+mindfresh doctor demo
+mindfresh refresh demo
+mindfresh watch --all-enabled --once
+```
+
+Demo vault가 아니라 실제 vault를 연결하려면 다음을 실행하세요.
 
 ```bash
 mindfresh onboard
@@ -62,52 +98,12 @@ mindfresh onboard
 
 `onboard`는 정확한 vault 폴더 경로를 붙여넣으라고 요청합니다. `mindfresh`는 home, Desktop, Documents, 노트 폴더를 자동 검색하지 않습니다. API key 값도 Mindfresh에 직접 입력하지 않습니다.
 
-복붙 가능한 non-interactive onboarding도 지원합니다.
-
-```bash
-mindfresh onboard \
-  --vault-name research \
-  --vault-path ~/Documents/ResearchVault \
-  --model-preset gemini-3-flash \
-  --non-interactive
-```
-
-기본 preset은 `gemini-3-flash`이며 Google Gemini API 모델 `gemini-3-flash-preview`를 사용합니다. 실제 live 사용 전에는 API key 환경변수 하나를 설정하세요.
-
-```bash
-export GOOGLE_API_KEY="your-google-api-key"
-# GEMINI_API_KEY도 사용할 수 있습니다.
-mindfresh keys status
-```
-
-설치와 non-secret config 상태를 확인합니다.
-
-```bash
-mindfresh --version
-mindfresh keys status
-mindfresh models list
-mindfresh doctor research
-```
-
-live model 없이 안전한 deterministic smoke를 실행합니다.
-
-```bash
-mindfresh refresh research --adapter fake
-```
-
-API key 설정 후 bounded live refresh/watch를 한 번 실행합니다.
-
-```bash
-mindfresh refresh research
-mindfresh watch --all-enabled --once
-```
-
 ### 개발자 수동 설치
 
-repo 기여나 packaging 동작 디버깅 시 이 경로를 사용하세요.
+이 repo에 기여하거나 packaging 동작을 디버깅할 때 이 경로를 사용하세요.
 
 ```bash
-git clone https://github.com/YOUR-ORG/mindfresh.git
+git clone https://github.com/Oreochococukie/mindfresh.git
 cd mindfresh
 python3 -m venv .venv
 source .venv/bin/activate

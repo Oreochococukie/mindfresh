@@ -45,18 +45,58 @@ Flow:
 
 ## Quick start (recommended)
 
-For the current private repo, clone once and run the local installer. It creates a
-user-owned install under `~/.mindfresh`, without `sudo`, shell-profile edits, or
-background daemons.
+Clone this repository and run the local installer. It creates a user-owned
+install under `~/.mindfresh`, without `sudo`, shell-profile edits, or background
+daemons. The command below is intentionally copy/pasteable for this repo.
 
 ```bash
-git clone https://github.com/YOUR-ORG/mindfresh.git
+git clone https://github.com/Oreochococukie/mindfresh.git
 cd mindfresh
 ./install.sh
 export PATH="$HOME/.mindfresh/bin:$PATH"
 ```
 
-Then start the beginner-friendly onboarding flow:
+Run a copy/paste smoke test with a demo vault. This path does not need an API
+key and proves the command, config, scanner, and generated files work:
+
+```bash
+mkdir -p ~/Documents/MindfreshDemoVault/research/topic-a
+cat > ~/Documents/MindfreshDemoVault/research/topic-a/first-note.md <<'EOF'
+# First note
+
+Mindfresh should preserve this source note and generate latest-state files next to it.
+EOF
+
+mindfresh onboard \
+  --vault-name demo \
+  --vault-path ~/Documents/MindfreshDemoVault \
+  --model-preset gemini-3-flash \
+  --non-interactive \
+  --skip-doctor
+
+mindfresh --version
+mindfresh models list
+mindfresh vault status demo
+mindfresh refresh demo --adapter fake
+cat ~/Documents/MindfreshDemoVault/research/topic-a/SUMMARY.md
+```
+
+The default preset is `gemini-3-flash`, which uses the Google Gemini API model
+`gemini-3-flash-preview`. For live Gemini use, set one API-key environment
+variable, choose from the models that key can access, then run diagnostics and
+refresh:
+
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+# GEMINI_API_KEY is also accepted.
+mindfresh keys status
+mindfresh models google --vault demo
+mindfresh doctor demo
+mindfresh refresh demo
+mindfresh watch --all-enabled --once
+```
+
+To connect your real vault instead of the demo vault, run:
 
 ```bash
 mindfresh onboard
@@ -66,53 +106,12 @@ The onboarding command asks you to paste the exact vault folder path. `mindfresh
 never searches your home, Desktop, Documents, or note folders. It also never
 asks you to type an API-key value into Mindfresh.
 
-Copy/paste non-interactive onboarding is also supported:
-
-```bash
-mindfresh onboard \
-  --vault-name research \
-  --vault-path ~/Documents/ResearchVault \
-  --model-preset gemini-3-flash \
-  --non-interactive
-```
-
-The default preset is `gemini-3-flash`, which uses the Google Gemini API model
-`gemini-3-flash-preview`. Set one API key environment variable before live use:
-
-```bash
-export GOOGLE_API_KEY="your-google-api-key"
-# GEMINI_API_KEY is also accepted.
-mindfresh keys status
-```
-
-Verify the install and non-secret config state:
-
-```bash
-mindfresh --version
-mindfresh keys status
-mindfresh models list
-mindfresh doctor research
-```
-
-Run a safe deterministic smoke without a live model:
-
-```bash
-mindfresh refresh research --adapter fake
-```
-
-Run one bounded live refresh/watch cycle after your API key is set:
-
-```bash
-mindfresh refresh research
-mindfresh watch --all-enabled --once
-```
-
 ### Manual developer install
 
-Use this path when contributing to the repo or debugging packaging behavior:
+Use this path when contributing to this repo or debugging packaging behavior:
 
 ```bash
-git clone https://github.com/YOUR-ORG/mindfresh.git
+git clone https://github.com/Oreochococukie/mindfresh.git
 cd mindfresh
 python3 -m venv .venv
 source .venv/bin/activate
