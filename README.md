@@ -81,9 +81,17 @@ mindfresh refresh research --adapter fake --dry-run
 ```
 
 The default preset is `gemini-3-flash`, which uses the Google Gemini API model
-`gemini-3-flash-preview`. For live Gemini use, set one API-key environment
-variable, choose from the models that key can access, then run diagnostics and
-refresh:
+`gemini-3-flash-preview`. If Gemini output limits make the generated note too
+short, use the API-free extractive merge adapter instead:
+
+```bash
+mindfresh refresh research --adapter merge
+# or store it as the vault preset:
+mindfresh vault model research merge
+```
+
+For live Gemini use, set one API-key environment variable, choose from the
+models that key can access, then run diagnostics and refresh:
 
 ```bash
 export GOOGLE_API_KEY="your-google-api-key"
@@ -232,6 +240,7 @@ mindfresh vault model research qwen3-14b-ollama
 `mindfresh models list` also prints "Recommended for this Mac" guidance:
 
 - another Mac / no local LLM → `gemini-3-flash` (default Gemini API path)
+- no API / preserve original text → `merge`
 - offline smaller local → `qwen3-14b-ollama` or `gemma3-12b-ollama`
 - offline quality local → `gemma4-31b-ollama`
 - tests/CI → `fake`
@@ -257,6 +266,7 @@ The architecture keeps model/runtime behind adapters.
 
 Implemented adapters:
 
+- `merge` / `extractive`: API/LLM-free adapter that preserves source Markdown sections, folds exact duplicates, and keeps the latest same-heading version. Use this when Gemini output limits make the note too short.
 - `fake`: deterministic no-model adapter for tests and CI.
 - `google` / `gemini`: Google Gemini API adapter. Default model preset is `gemini-3-flash`.
 - `mlx`: optional Apple Silicon adapter through the `mlx_lm.generate` command.

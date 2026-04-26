@@ -78,7 +78,15 @@ mindfresh vault status research
 mindfresh refresh research --adapter fake --dry-run
 ```
 
-기본 preset은 `gemini-3-flash`이며 Google Gemini API 모델 `gemini-3-flash-preview`를 사용합니다. 실제 Gemini 사용 시에는 API key 환경변수 하나를 설정하고, 그 key로 접근 가능한 모델을 번호로 고른 뒤 diagnostics/refresh를 실행합니다.
+기본 preset은 `gemini-3-flash`이며 Google Gemini API 모델 `gemini-3-flash-preview`를 사용합니다. Gemini 출력 제한 때문에 정리본이 짧아지는 vault는 API를 쓰지 않는 추출형 병합 adapter를 바로 쓸 수 있습니다.
+
+```bash
+mindfresh refresh research --adapter merge
+# 또는 preset으로 저장:
+mindfresh vault model research merge
+```
+
+실제 Gemini 사용 시에는 API key 환경변수 하나를 설정하고, 그 key로 접근 가능한 모델을 번호로 고른 뒤 diagnostics/refresh를 실행합니다.
 
 ```bash
 export GOOGLE_API_KEY="your-google-api-key"
@@ -223,6 +231,7 @@ mindfresh vault model research qwen3-14b-ollama
 `mindfresh models list`는 "Recommended for this Mac" 안내도 출력합니다.
 
 - 다른 Mac / 로컬 LLM 없음 → `gemini-3-flash` 기본 Gemini API 경로
+- no API / preserve original text → `merge`
 - offline smaller local → `qwen3-14b-ollama` 또는 `gemma3-12b-ollama`
 - offline quality local → `gemma4-31b-ollama`
 - tests/CI → `fake`
@@ -248,6 +257,7 @@ mindfresh watch ~/Documents/ResearchVault --once
 
 구현된 adapter:
 
+- `merge` / `extractive`: 외부 API/LLM 없이 원본 Markdown 섹션을 그대로 병합하는 adapter. 출력 토큰 제한을 피하고, 같은 제목의 최신 버전을 유지하며 exact duplicate를 접습니다.
 - `fake`: 테스트/CI용 deterministic no-model adapter.
 - `google` / `gemini`: Google Gemini API adapter. 기본 model preset은 `gemini-3-flash`.
 - `mlx`: `mlx_lm.generate` command를 통한 선택적 Apple Silicon adapter.

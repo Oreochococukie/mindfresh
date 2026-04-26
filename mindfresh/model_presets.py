@@ -42,6 +42,12 @@ MODEL_PRESETS: Dict[str, ModelPreset] = {
         model="gemma3:12b",
         description="로컬 Ollama Gemma 3 12B. 더 작은 로컬 모델 선택지.",
     ),
+    "merge": ModelPreset(
+        name="merge",
+        adapter="merge",
+        model=None,
+        description="API/LLM 없이 원본 Markdown을 중복 제거·최신 기준으로 병합하는 추출형 어댑터.",
+    ),
     "fake": ModelPreset(
         name="fake",
         adapter="fake",
@@ -52,6 +58,7 @@ MODEL_PRESETS: Dict[str, ModelPreset] = {
 
 MODEL_PRESET_RECOMMENDATIONS: Tuple[Tuple[str, str], ...] = (
     ("another Mac / no local LLM", "gemini-3-flash"),
+    ("no API / preserve original text", "merge"),
     ("offline smaller local", "qwen3-14b-ollama or gemma3-12b-ollama"),
     ("offline quality local", "gemma4-31b-ollama"),
     ("tests/CI", "fake"),

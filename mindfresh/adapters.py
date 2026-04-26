@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import importlib.util
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -225,6 +226,97 @@ class FakeSummarizerAdapter:
         )
 
 
+@dataclass(frozen=True)
+class _MergeBlock:
+    source_path: str
+    source_sha256: str
+    source_order: int
+    block_order: int
+    heading_path: Tuple[str, ...]
+    content: str
+    date_key: str
+
+    @property
+    def title(self) -> str:
+        if self.heading_path:
+            return " > ".join(self.heading_path)
+        return self.source_path
+
+    @property
+    def order_key(self) -> Tuple[str, str, int]:
+        return (self.date_key, self.source_path, self.block_order)
+
+
+class ExtractiveMergeAdapter:
+    """LLM-free adapter that builds one merged note from source Markdown.
+
+    This adapter exists for the core mindfresh use case where a hosted model's
+    output window is the wrong bottleneck: the generated note should not be a
+    short summary, it should be an extractive latest-state merge.  It therefore
+    never calls an external API.  It keeps raw Markdown sections verbatim,
+    folds exact duplicates, and treats same-heading later sections as the
+    canonical latest version while recording older variants as replaced.
+    """
+
+    name = "merge"
+
+    def __init__(self, model: Optional[str] = None) -> None:
+        self.model = model
+        self.model_profile = f"merge/{model or 'extractive-v1'}"
+
+    def summarize(
+        self,
+        *,
+        topic: str,
+        sources: Sequence[SourceDocument],
+        recent_sources: Sequence[SourceDocument],
+        previous_summary: Optional[str],
+    ) -> SummaryResult:
+        del previous_summary  # The merge is fully source-derived and deterministic.
+        recent_paths = {source.relative_path for source in recent_sources}
+        blocks = _merge_blocks_from_sources(sources)
+        canonical_blocks, duplicate_groups, replaced_blocks = _canonical_merge_blocks(blocks)
+
+        refreshed_context = _render_extractive_merge_context(topic, canonical_blocks)
+        freshness_updates = _merge_freshness_updates(
+            sources=sources,
+            recent_paths=recent_paths,
+            canonical_blocks=canonical_blocks,
+            replaced_blocks=replaced_blocks,
+        )
+        preserved_context = _merge_preserved_context(canonical_blocks)
+        stale_or_conflicting = _merge_replaced_claims(replaced_blocks)
+        open_questions = _merge_open_questions(sources)
+        updated_claims = [
+            f"{block.title} — `{block.source_path}` 기준 최신 내용 유지"
+            for block in canonical_blocks
+            if block.source_path in recent_paths
+        ]
+
+        if replaced_blocks:
+            freshness_state = "changed"
+        elif recent_sources and len(recent_sources) < len(sources):
+            freshness_state = "changed"
+        else:
+            freshness_state = "fresh"
+
+        return SummaryResult(
+            freshness_state=freshness_state,
+            refreshed_context=refreshed_context,
+            freshness_updates=freshness_updates,
+            duplicate_groups=duplicate_groups,
+            preserved_context=preserved_context,
+            stale_or_conflicting_claims=stale_or_conflicting,
+            open_questions=open_questions,
+            update_delta=(
+                "Gemini 같은 외부 모델 호출 없이 원본 Markdown 섹션을 그대로 병합하고, "
+                f"중복/동일 제목 갱신 후보 {len(replaced_blocks)}개를 최신 기준으로 접었습니다."
+            ),
+            updated_claims=updated_claims,
+            model_profile=self.model_profile,
+        )
+
+
 class LiveLLMSummarizerAdapter:
     """Base adapter that asks a local LLM for JSON and normalizes fallbacks."""
 
@@ -433,6 +525,8 @@ def get_adapter(name: str, *, model: Optional[str] = None) -> SummarizerAdapter:
     normalized = name.strip().lower()
     if normalized == "fake":
         return FakeSummarizerAdapter(model=model)
+    if normalized in {"merge", "extractive", "local-merge"}:
+        return ExtractiveMergeAdapter(model=model)
     if normalized in {"google", "gemini"}:
         return GoogleGeminiSummarizerAdapter(model=model or DEFAULT_GOOGLE_MODEL)
     if normalized == "ollama":
@@ -449,6 +543,10 @@ def adapter_diagnostics(name: str, *, model: Optional[str] = None) -> tuple[List
     failures: List[str] = []
     if normalized == "fake":
         passes.append("fake adapter available")
+        return passes, failures
+
+    if normalized in {"merge", "extractive", "local-merge"}:
+        passes.append("merge adapter available (LLM-free extractive latest-state merge)")
         return passes, failures
 
     if normalized in {"google", "gemini"}:
@@ -784,6 +882,298 @@ def _extend_ollama_model_diagnostics(
 
 def _looks_like_local_path(value: str) -> bool:
     return value.startswith(("~", "/", ".")) or os.sep in value
+
+
+_FRONTMATTER_DATE_RE = re.compile(r"^date\s*:\s*['\"]?(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
+_FILENAME_DATE_RE = re.compile(r"(\d{4}[-_]\d{2}[-_]\d{2}|\d{8})")
+
+
+def _merge_blocks_from_sources(sources: Sequence[SourceDocument]) -> List[_MergeBlock]:
+    blocks: List[_MergeBlock] = []
+    for source_order, source in enumerate(sources):
+        source_blocks = _split_markdown_blocks(source, source_order=source_order)
+        blocks.extend(source_blocks)
+    return blocks
+
+
+def _split_markdown_blocks(source: SourceDocument, *, source_order: int) -> List[_MergeBlock]:
+    text = _strip_frontmatter(source.content).strip()
+    if not text:
+        return [
+            _MergeBlock(
+                source_path=source.relative_path,
+                source_sha256=source.sha256,
+                source_order=source_order,
+                block_order=0,
+                heading_path=(),
+                content="(빈 Markdown 원본)",
+                date_key=_source_date_key(source),
+            )
+        ]
+
+    lines = text.splitlines()
+    blocks: List[_MergeBlock] = []
+    heading_stack: List[str] = []
+    current_heading_path: Tuple[str, ...] = ()
+    current_lines: List[str] = []
+    in_fenced_block = False
+    block_order = 0
+
+    def flush() -> None:
+        nonlocal block_order, current_lines, current_heading_path
+        content = "\n".join(current_lines).strip()
+        if not content:
+            current_lines = []
+            return
+        blocks.append(
+            _MergeBlock(
+                source_path=source.relative_path,
+                source_sha256=source.sha256,
+                source_order=source_order,
+                block_order=block_order,
+                heading_path=current_heading_path,
+                content=content,
+                date_key=_source_date_key(source),
+            )
+        )
+        block_order += 1
+        current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fenced_block = not in_fenced_block
+            current_lines.append(line)
+            continue
+
+        match = None if in_fenced_block else re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match:
+            flush()
+            level = len(match.group(1))
+            title = match.group(2).strip()
+            heading_stack = heading_stack[: level - 1]
+            heading_stack.append(title)
+            current_heading_path = tuple(heading_stack)
+            current_lines = [line]
+            continue
+
+        current_lines.append(line)
+
+    flush()
+    if blocks:
+        return blocks
+    return [
+        _MergeBlock(
+            source_path=source.relative_path,
+            source_sha256=source.sha256,
+            source_order=source_order,
+            block_order=0,
+            heading_path=(),
+            content=text,
+            date_key=_source_date_key(source),
+        )
+    ]
+
+
+def _canonical_merge_blocks(
+    blocks: Sequence[_MergeBlock],
+) -> Tuple[List[_MergeBlock], List[str], List[Tuple[_MergeBlock, _MergeBlock, str]]]:
+    """Return canonical blocks, duplicate notes, and replaced block triples.
+
+    The third tuple item is the replacement reason.  Exact duplicate content is
+    folded first.  Remaining same-heading variants are treated as latest-state
+    updates, with the newest source kept as canonical.
+    """
+    exact_groups: Dict[str, List[_MergeBlock]] = {}
+    for block in blocks:
+        exact_groups.setdefault(_normalize_markdown_claim(block.content), []).append(block)
+
+    unique_blocks: List[_MergeBlock] = []
+    duplicate_groups: List[str] = []
+    replaced: List[Tuple[_MergeBlock, _MergeBlock, str]] = []
+    for group in exact_groups.values():
+        canonical = max(group, key=lambda block: (block.order_key, block.source_order))
+        unique_blocks.append(canonical)
+        older = [block for block in group if block is not canonical]
+        if older:
+            duplicate_groups.append(
+                f"`{canonical.title}` 내용이 "
+                + ", ".join(
+                    f"`{block.source_path}`" for block in sorted(older, key=lambda b: b.order_key)
+                )
+                + f"와 `{canonical.source_path}`에서 반복되어 최신/대표 출처 하나로 병합했습니다."
+            )
+            for block in older:
+                replaced.append((block, canonical, "동일 내용 반복"))
+
+    by_heading: Dict[str, List[_MergeBlock]] = {}
+    for block in unique_blocks:
+        key = _merge_heading_key(block)
+        by_heading.setdefault(key, []).append(block)
+
+    canonical_blocks: List[_MergeBlock] = []
+    for heading_key in sorted(by_heading, key=lambda key: _first_block_position(by_heading[key])):
+        group = by_heading[heading_key]
+        if len(group) == 1 or heading_key.startswith("content:"):
+            canonical_blocks.extend(group)
+            continue
+        canonical = max(group, key=lambda block: (block.order_key, block.source_order))
+        canonical_blocks.append(canonical)
+        older = [block for block in group if block is not canonical]
+        if older:
+            duplicate_groups.append(
+                f"`{canonical.title}` 제목의 여러 버전을 비교해 `{canonical.source_path}`의 내용을 최신 버전으로 유지하고, "
+                + ", ".join(
+                    f"`{block.source_path}`" for block in sorted(older, key=lambda b: b.order_key)
+                )
+                + "의 이전 버전은 접었습니다."
+            )
+            for block in older:
+                replaced.append((block, canonical, "같은 제목의 이전 버전"))
+
+    return (
+        sorted(canonical_blocks, key=lambda block: (block.source_order, block.block_order)),
+        duplicate_groups,
+        replaced,
+    )
+
+
+def _render_extractive_merge_context(topic: str, blocks: Sequence[_MergeBlock]) -> str:
+    lines = [
+        f"# {topic} — 병합 정리 노트",
+        "",
+        "이 정리본은 외부 모델 요약이 아니라 원본 Markdown 섹션을 그대로 보존해 병합한 최신 상태 노트입니다.",
+        "중복 섹션은 한 번만 남기고, 같은 제목의 여러 버전은 최신 출처의 내용을 기준으로 유지했습니다.",
+        "",
+    ]
+    last_source: Optional[str] = None
+    for block in blocks:
+        if block.source_path != last_source:
+            lines.extend(
+                ["", f"<!-- 출처: {block.source_path} / sha256={block.source_sha256[:12]} -->", ""]
+            )
+            last_source = block.source_path
+        content = block.content.strip()
+        if not block.heading_path and not _starts_with_heading(content):
+            lines.append(f"## {block.source_path}")
+            lines.append("")
+        lines.append(content)
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _merge_freshness_updates(
+    *,
+    sources: Sequence[SourceDocument],
+    recent_paths: set[str],
+    canonical_blocks: Sequence[_MergeBlock],
+    replaced_blocks: Sequence[Tuple[_MergeBlock, _MergeBlock, str]],
+) -> List[str]:
+    updates = [
+        f"`{source.relative_path}` 원본을 정리 노트 병합 입력으로 반영했습니다."
+        for source in sources
+        if source.relative_path in recent_paths
+    ]
+    if replaced_blocks:
+        updates.append(f"중복 또는 같은 제목의 이전 버전 {len(replaced_blocks)}개를 최신 기준으로 접었습니다.")
+    updates.append(f"최종 정리 노트에는 비중복 원문 블록 {len(canonical_blocks)}개를 보존했습니다.")
+    return updates
+
+
+def _merge_preserved_context(blocks: Sequence[_MergeBlock]) -> List[str]:
+    preserved = [
+        f"`{block.source_path}`의 `{block.title}` 섹션을 원문 형태로 보존"
+        for block in blocks[:20]
+    ]
+    if len(blocks) > 20:
+        preserved.append(f"그 외 비중복 원문 블록 {len(blocks) - 20}개도 정리본 본문에 보존")
+    return preserved
+
+
+def _merge_replaced_claims(
+    replaced_blocks: Sequence[Tuple[_MergeBlock, _MergeBlock, str]],
+) -> List[str]:
+    return [
+        f"`{old.title}`: `{old.source_path}`의 내용은 `{new.source_path}` 기준 최신 내용으로 대체됨 ({reason})."
+        for old, new, reason in replaced_blocks[:50]
+    ] + (
+        [f"추가로 접힌 이전/중복 블록 {len(replaced_blocks) - 50}개가 있습니다."]
+        if len(replaced_blocks) > 50
+        else []
+    )
+
+
+def _merge_open_questions(sources: Sequence[SourceDocument]) -> List[str]:
+    limited = [source.relative_path for source in sources if "[입력 길이 제한:" in source.content]
+    if limited:
+        return [
+            "입력 길이 제한 표시가 있는 원본이 있어 해당 파일은 불완전할 수 있습니다: "
+            + ", ".join(f"`{path}`" for path in limited)
+        ]
+    return ["외부 모델을 쓰지 않았으므로 의미적 모순 판정은 보수적으로만 처리했습니다. 중요한 충돌은 원본을 확인하세요."]
+
+
+def _strip_frontmatter(text: str) -> str:
+    if not text.startswith("---\n"):
+        return text
+    closing = text.find("\n---", 4)
+    if closing == -1:
+        return text
+    return text[closing + len("\n---") :].lstrip("\n")
+
+
+def _source_date_key(source: SourceDocument) -> str:
+    for line in source.content.splitlines()[:30]:
+        match = _FRONTMATTER_DATE_RE.match(line.strip())
+        if match:
+            return match.group(1)
+    match = _FILENAME_DATE_RE.search(source.relative_path)
+    if not match:
+        return "0000-00-00"
+    value = match.group(1).replace("_", "-")
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    return value
+
+
+def _normalize_markdown_claim(text: str) -> str:
+    normalized_lines: List[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!-- 출처:"):
+            continue
+        stripped = re.sub(r"^#{1,6}\s+", "", stripped)
+        stripped = re.sub(r"\s+", " ", stripped)
+        normalized_lines.append(stripped.casefold())
+    return "\n".join(normalized_lines)
+
+
+def _merge_heading_key(block: _MergeBlock) -> str:
+    if block.heading_path:
+        return "heading:" + " / ".join(_normalize_heading(part) for part in block.heading_path)
+    first = _first_content_line(block.content)
+    return "content:" + _normalize_heading(first or block.source_path)
+
+
+def _normalize_heading(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().casefold())
+
+
+def _first_content_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped
+    return ""
+
+
+def _first_block_position(blocks: Sequence[_MergeBlock]) -> Tuple[int, int]:
+    first = min(blocks, key=lambda block: (block.source_order, block.block_order))
+    return (first.source_order, first.block_order)
+
+
+def _starts_with_heading(text: str) -> bool:
+    return bool(re.match(r"^#{1,6}\s+", text.lstrip()))
 
 
 def _build_live_prompt(
